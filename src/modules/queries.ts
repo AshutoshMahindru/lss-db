@@ -239,34 +239,14 @@ function advancedTagClauses(tag: string, index: number): string[] {
   });
 }
 
-function pageIdentityAlternates(pageName?: string): string[] {
-  const raw = String(pageName ?? '').trim();
-  if (!raw) return [];
-  return [...new Set([raw, safePageName(raw), raw.toLowerCase(), safePageName(raw).toLowerCase()])].filter(Boolean);
-}
-
 async function currentPagePropertyClause(
   prop: string,
   currentPageId?: number,
-  currentPageName?: string,
+  _currentPageName?: string,
 ): Promise<string> {
   const attr = identToDatascriptAttr(await resolvePropertyQueryName(prop));
   if (currentPageId != null) {
-    const refClauses = [`[?ref :db/id ${currentPageId}]`];
-    for (const name of pageIdentityAlternates(currentPageName)) {
-      const quoted = ednQuotedString(name);
-      refClauses.push(
-        `[?ref :block/title ${quoted}]`,
-        `[?ref :block/original-name ${quoted}]`,
-        `[?ref :block/name ${quoted}]`,
-      );
-    }
-    const valueClauses = [`[?b ${attr} ${currentPageId}]`];
-    for (const name of pageIdentityAlternates(currentPageName)) {
-      valueClauses.push(`[?b ${attr} ${ednQuotedString(name)}]`);
-    }
-    valueClauses.push(`(and [?b ${attr} ?ref] (or ${refClauses.join(' ')}))`);
-    return `(or ${valueClauses.join(' ')})`;
+    return `[?b ${attr} ${currentPageId}]`;
   }
   return `(or [?b ${attr} ?current] (and [?b ${attr} ?ref] (or [(= ?current ?ref)] [?ref :db/id ?current] [?ref :block/title ?current] [?ref :block/name ?current] [?ref :block/uuid ?current])))`;
 }
