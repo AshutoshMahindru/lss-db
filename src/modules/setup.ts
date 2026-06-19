@@ -33,7 +33,7 @@ import {
   templateReference,
   wordEntryContract,
 } from './contracts';
-import { installLegacyTemplates, installNativeTemplates } from './templates';
+import { installLegacyTemplates, installNativeTemplates, uniqueObjectProps } from './templates';
 
 async function checkPage(missing: string[], canonical: string): Promise<void> {
   const p = pageForCanonical(canonical);
@@ -181,7 +181,6 @@ export async function step10db(r: Result): Promise<void> {
       `Skipped native createTag for Logseq built-in tags: ${skippedBuiltins.map((t) => `#${t}`).join(', ')}.`,
     );
   }
-  const propertyCache = new Set<string>();
   const nativeProperties = [
     ...(registry.propertyRegistry ?? []),
     { name: 'lss-object-type', type: 'default', cardinality: 'one' },
@@ -191,7 +190,6 @@ export async function step10db(r: Result): Promise<void> {
     if (!name) continue;
     try {
       const ensured = await ensureNativeProperty(p);
-      if (ensured?.name) propertyCache.add(ensured.name);
       if (ensured?.created) {
         r.actions.push(`CREATE native property: ${name}`);
       } else if (ensured?.skipped) {
@@ -207,7 +205,6 @@ export async function step10db(r: Result): Promise<void> {
         isPluginPropertyOwnershipError(message)
       ) {
         r.notes.push(`SKIP native property ${name}: ${message}`);
-        propertyCache.add(name);
       } else {
         r.errors.push(`native-property ${name}: ${message}`);
       }
@@ -227,17 +224,44 @@ export async function step10db(r: Result): Promise<void> {
         r.errors.push(`tag-extends #${tag}->#${parent}: ${formatError(e)}`);
       }
     }
-    for (const prop of o.properties ?? []) {
-      if (!propertyCache.has(prop)) {
-        r.notes.push(`SKIP tag-property #${tag}.${prop}: native property ${prop} was not registered.`);
-        continue;
-      }
+    await removeNativeTagSchemaProperties(r, tag, tagId);
+  }
+}
+
+export async function removeNativeTagSchemaProperties(
+  r: Result,
+  tag?: string,
+  tagId?: string | number | null,
+): Promise<void> {
+  if (MODE !== 'db') return;
+  const targets = tag
+    ? allObjects().filter((o) => safeTag(o.tag) === safeTag(tag))
+    : allObjects();
+  if (!targets.length) return;
+  if (!logseq.Editor.removeTagProperty) {
+    r.notes.push('removeTagProperty API unavailable; cannot remove native tag schema properties.');
+    return;
+  }
+
+  for (const o of targets) {
+    const cleanTag = safeTag(o.tag);
+    let resolvedTagId = tagId ?? null;
+    if (resolvedTagId == null) {
+      const tagObj = await logseq.Editor.getTag(cleanTag).catch(() => null);
+      resolvedTagId = tagObj ? entityIdentity(tagObj) : null;
+    }
+    if (resolvedTagId == null) continue;
+
+    for (const prop of [...new Set([...uniqueObjectProps(o), 'lss-object-type', 'lss-object-tag'])]) {
       try {
-        await logseq.Editor.addTagProperty(tagId, prop);
-        r.actions.push(`#${tag} property ${prop}`);
+        await logseq.Editor.removeTagProperty(resolvedTagId, prop);
+        r.actions.push(`REMOVE native tag property #${cleanTag}.${prop}`);
         await sleep(20);
       } catch (e) {
-        r.errors.push(`tag-property #${tag}.${prop}: ${formatError(e)}`);
+        const message = formatError(e);
+        if (!/not found|missing|does not exist|not .*property/i.test(message)) {
+          r.notes.push(`native tag property #${cleanTag}.${prop} not removed: ${message}`);
+        }
       }
     }
   }

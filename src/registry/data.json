@@ -22,7 +22,7 @@
       "Scheduled"
     ],
     "nonTaskStatusField": "status",
-    "tagIsSolePropertySchemaSource": true,
+    "tagIsSolePropertySchemaSource": false,
     "templateBodyIsLayoutAndSectionsOnly": true,
     "registryObjectDefinesCanonicalProperties": true,
     "noPropertyDuplicationFromTemplates": true
@@ -9990,16 +9990,16 @@
       ]
     },
     {
-      "id": "LSS-AUD-003-tag-properties-present",
-      "title": "Registered tag properties are configured",
+      "id": "LSS-AUD-003-tag-properties-absent",
+      "title": "Entity tag properties are not configured on native tags",
       "severity": "ERROR",
       "scope": "tags",
-      "condition": "Each DB tag must include all registered tag properties.",
-      "detectionStrategy": "For each tag, compare Tag Properties with registry properties and inherited parent properties.",
+      "condition": "DB entity tags must not include LSS object schema properties; properties are materialized on entity pages only.",
+      "detectionStrategy": "For each tag, verify native Tag Properties does not include registry object properties.",
       "autoFixable": true,
-      "suggestedFix": "Create properties and add them to the tag page Tag Properties list.",
+      "suggestedFix": "Remove registry object properties from the native tag property list; keep class tags and entity page properties.",
       "acceptanceCriteria": [
-        "All required tag properties are visible on tagged nodes."
+        "Tagging a journal block with an LSS entity tag does not display schema properties on the journal block."
       ]
     },
     {
@@ -10902,7 +10902,7 @@
         "createTag",
         "upsertProperty",
         "addTagExtends",
-        "addTagProperty",
+        "removeTagProperty",
         "appendBlockInPage"
       ],
       "dryRunSupported": true,

@@ -54,6 +54,7 @@ import {
   sectionNameFromLine,
   viewDefinitionsSafe,
 } from './queries';
+import { removeNativeTagSchemaProperties } from './setup';
 
 function repairPropertyLines(content: string): Array<{ property: string; value: string }> {
   const lines: Array<{ property: string; value: string }> = [];
@@ -1446,6 +1447,7 @@ async function repairSpecificPage(
       blocks = await getBlocks(safePageName(pageName));
     }
     if (pageRecordIsJournal(page, pageName)) {
+      await removeNativeTagSchemaProperties(result);
       const materialized = await materializeJournalEntityBlocks(result, pageName, blocks);
       markRepairCooldown(pageName);
       return materialized;
