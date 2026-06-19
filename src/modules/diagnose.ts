@@ -153,7 +153,7 @@ function ventureValueIsPageRef(value: unknown, venturePageName: string, ventureP
   return ventureItemIsPageRef(value, venturePageName, venturePageId);
 }
 
-async function resolveVenturePageFromValue(value: unknown): Promise<Record<string, unknown> | null> {
+async function resolveVenturePageFromValue(...values: unknown[]): Promise<Record<string, unknown> | null> {
   const tryName = async (name: string): Promise<Record<string, unknown> | null> => {
     const raw = name.trim();
     if (!raw) return null;
@@ -186,14 +186,18 @@ async function resolveVenturePageFromValue(value: unknown): Promise<Record<strin
     return await tryName(raw);
   };
 
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const page = await resolveItem(item);
-      if (page) return page;
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const page = await resolveItem(item);
+        if (page) return page;
+      }
+      continue;
     }
-    return null;
+    const page = await resolveItem(value);
+    if (page) return page;
   }
-  return resolveItem(value);
+  return null;
 }
 
 function looksLikePageEntityId(raw: string): boolean {
@@ -763,8 +767,9 @@ export async function diagnoseCurrentPage(r: Result): Promise<void> {
   const props = await readAllPageProperties(visibleName, pageBlockId);
   const classTags = await detectClassTags(pageBlockId);
   const objectType = String(getCanonicalProp(props, 'lss-object-type') ?? '(missing)');
-  const venture =
-    (await readRelationshipPropertyValue(pageBlockId, 'venture')) ?? getCanonicalProp(props, 'venture');
+  const rawVenture = getCanonicalProp(props, 'venture');
+  const relationshipVenture = await readRelationshipPropertyValue(pageBlockId, 'venture');
+  const venture = relationshipVenture ?? rawVenture;
 
   const lines: string[] = [];
   lines.push(`# LSS Diagnose: ${visibleName}`);
@@ -973,10 +978,11 @@ export async function diagnoseCurrentPage(r: Result): Promise<void> {
   if (inferredType === 'Function' || classTags.includes('Function')) {
     lines.push('## Function page checks');
     const typeOk = objectType.includes('Function');
-    const venturePage = await resolveVenturePageFromValue(venture);
+    const venturePage = await resolveVenturePageFromValue(venture, rawVenture);
     const ventureIsRef = isDbPageRefValue(venture);
     lines.push(`lss-object-type-ok:: ${typeOk ? 'yes' : 'no'}`);
     lines.push(`venture-property:: ${formatValue(venture)}`);
+    if (rawVenture !== venture) lines.push(`venture-visible-property:: ${formatValue(rawVenture)}`);
     lines.push(
       `venture-resolves-to-page:: ${venturePage ? String(venturePage.originalName ?? venturePage.name ?? 'yes') : 'no'}`,
     );

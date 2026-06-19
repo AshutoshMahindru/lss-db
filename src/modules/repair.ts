@@ -716,6 +716,10 @@ async function repairPageCore(
     const obj = objectByName(inferredType);
     if (obj) {
       for (const key of uniqueObjectProps(obj)) {
+        if (String(props.get(key) ?? '').trim()) {
+          result.actions.push(`SKIP canonical property already present from #${inferredType}: ${key}`);
+          continue;
+        }
         const def = defaultPropertyValue(key, obj);
         props.set(key, def || '');
         result.notes.push(`Ensured canonical property from #${inferredType}: ${key}`);
@@ -744,6 +748,12 @@ async function repairPageCore(
           break;
         }
       }
+    }
+    if (!valid && ids.length > 0) {
+      result.notes.push(
+        `Preserved ${relProp} numeric node ref(s) on ${pageName}; Logseq API did not resolve ${ids.join(', ')} during repair.`,
+      );
+      continue;
     }
     if (!valid) {
       if (logseq.Editor.removeBlockProperty) {
