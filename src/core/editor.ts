@@ -27,11 +27,51 @@ export async function getPage(name: string): Promise<any | null> {
   }
 }
 
+function normalizePageEntityRecord(record: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!record) return null;
+  return {
+    ...record,
+    id: record.id ?? record[':db/id'] ?? record['db/id'],
+    uuid: record.uuid ?? record[':block/uuid'] ?? record['block/uuid'],
+    name: record.name ?? record[':block/name'] ?? record['block/name'],
+    originalName:
+      record.originalName ??
+      record[':block/original-name'] ??
+      record['block/original-name'] ??
+      record.title ??
+      record[':block/title'] ??
+      record['block/title'],
+    title: record.title ?? record[':block/title'] ?? record['block/title'],
+  };
+}
+
+async function resolvePageByDbId(entityId: string | number): Promise<any | null> {
+  const id = Number(entityId);
+  if (!Number.isFinite(id) || id <= 0 || !logseq.DB?.datascriptQuery) return null;
+  try {
+    const rows = await logseq.DB.datascriptQuery(
+      `[:find (pull ?b [*])
+ :in $ ?id
+ :where
+ [?b :db/id ?id]]`,
+      id,
+    );
+    const record = Array.isArray(rows) ? rows[0]?.[0] : null;
+    return normalizePageEntityRecord((record as Record<string, unknown> | null) ?? null);
+  } catch {
+    return null;
+  }
+}
+
 export async function resolvePageFromIdentity(identity: string | number): Promise<any | null> {
   const raw = String(identity ?? '').trim();
   if (!raw) return null;
   let page = await getPage(raw);
   if (page) return page;
+  if (/^\d+$/.test(raw)) {
+    page = await resolvePageByDbId(raw);
+    if (page) return page;
+  }
   if (!logseq.Editor.getBlock) return null;
   try {
     const block = await logseq.Editor.getBlock(raw).catch(() => null);
@@ -46,6 +86,7 @@ export async function resolvePageFromIdentity(identity: string | number): Promis
     if (blockPage?.id != null) page = await getPage(String(blockPage.id));
     if (!page && blockPage?.uuid != null) page = await getPage(String(blockPage.uuid));
     if (!page && blockRecord.uuid != null) page = await getPage(String(blockRecord.uuid));
+    if (!page && blockRecord.id != null) page = await resolvePageByDbId(blockRecord.id as string | number);
   } catch {
     return null;
   }
@@ -224,29 +265,19 @@ export async function ensureTagByName(result: Result, tag: string): Promise<any 
 export async function resolveVisibleNodeToken(result: Result, token: string): Promise<string> {
   const raw = String(token ?? '').trim();
   if (!raw) return raw;
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)) {
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw);
+  const isDbId = /^\d+$/.test(raw);
+  if (!isUuid && !isDbId) {
     return raw;
   }
-  let node: any = null;
-  try {
-    node = logseq.Editor.getPage ? await logseq.Editor.getPage(raw).catch(() => null) : null;
-  } catch {
-    /* ignore */
-  }
-  if (!node) {
-    try {
-      node = logseq.Editor.getBlock ? await logseq.Editor.getBlock(raw).catch(() => null) : null;
-    } catch {
-      /* ignore */
-    }
-  }
-  const visible = node?.name ?? node?.originalName ?? node?.title ?? node?.content ?? null;
+  const node = await resolvePageFromIdentity(raw);
+  const visible = pageVisibleName(node) || String(node?.content ?? '').trim();
   if (visible) {
     const resolved = safePageName(visible);
     result.actions.push(`RESOLVE visible node token: ${raw} -> ${resolved}`);
     return resolved;
   }
-  result.notes.push(`Could not resolve UUID-like visible node token ${raw}; leaving it unchanged.`);
+  result.notes.push(`Could not resolve DB node token ${raw}; leaving it unchanged.`);
   return raw;
 }
 

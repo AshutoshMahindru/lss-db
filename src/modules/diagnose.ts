@@ -171,7 +171,7 @@ async function resolveVenturePageFromValue(value: unknown): Promise<Record<strin
       const id = record.id;
       if (id != null) {
         const byId =
-          (await getPage(String(id))) ||
+          (await resolvePageFromIdentity(id as string | number)) ||
           (await tryName(String(record.name ?? record.originalName ?? record.title ?? '')));
         if (byId) return byId as Record<string, unknown>;
       }
@@ -180,7 +180,7 @@ async function resolveVenturePageFromValue(value: unknown): Promise<Record<strin
     }
     const raw = String(item).trim();
     if (!raw) return null;
-    if (/^\d+$/.test(raw)) return (await getPage(raw)) as Record<string, unknown> | null;
+    if (/^\d+$/.test(raw)) return (await resolvePageFromIdentity(raw)) as Record<string, unknown> | null;
     const wiki = raw.match(/^\[\[([^\]]+)\]\]$/);
     if (wiki?.[1]) return await tryName(wiki[1]);
     return await tryName(raw);

@@ -25,6 +25,7 @@ import {
   ensurePage,
   getBlocks,
   getPage,
+  resolvePageFromIdentity,
   resolveVisibleNodeToken,
   updateBlockContent,
   walkBlocks,
@@ -730,7 +731,7 @@ async function repairPageCore(
     const ids = extractNodeIds(curVal);
     let valid = false;
     for (const id of ids) {
-      const p = await getPage(String(id)).catch(() => null);
+      const p = await resolvePageFromIdentity(id).catch(() => null);
       if (p) {
         const pId = entityIdentity(p) || id;
         if (relProp === 'venture') {
