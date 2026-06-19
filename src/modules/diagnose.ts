@@ -37,6 +37,7 @@ import {
   sectionNameFromLine,
   dbAdvancedQueryBlockNeedsStructureRepair,
   dbDashboardQueryForViewAsync,
+  extractAdvancedQueryDsl,
   extractAdvancedQueryVector,
   inspectDbQueryBlockStructure,
   isAdvancedQueryBlockContent,
@@ -399,6 +400,13 @@ async function runQueryEngineCandidates(
   const candidates: Array<{ channel: string; payload: string }> = [];
   if (isAdvancedQueryBlockContent(text)) {
     candidates.push({ channel: 'custom-advanced', payload: text });
+    const queryDsl = extractAdvancedQueryDsl(text);
+    if (queryDsl) {
+      candidates.push(
+        { channel: 'advanced-dsl', payload: queryDsl },
+        { channel: 'custom-advanced-dsl', payload: queryDsl },
+      );
+    }
     const queryVector = extractAdvancedQueryVector(text);
     if (queryVector) {
       candidates.push({ channel: 'custom-advanced-wrapped', payload: `{:query ${queryVector}}` });
@@ -659,7 +667,7 @@ async function runLiveQueryProbe(
 
     if (storedProbe && isAdvancedQueryBlockContent(storedProbe.body) && storedDsHit) {
       lines.push(
-        `- live-query-note/stored-advanced: datascript with venture id ${venturePageId ?? '?'} => ${storedDsHit.count} hit(s); lss:50 should keep advanced queries bound through numeric :inputs [page-id]`,
+        `- live-query-note/stored-advanced: datascript with venture id ${venturePageId ?? '?'} => ${storedDsHit.count} hit(s); lss:50 should keep DB /Advanced Query structure with a Logseq DSL :query payload`,
       );
     }
     if (!anyHits) {
@@ -984,9 +992,9 @@ export async function diagnoseCurrentPage(r: Result): Promise<void> {
       );
       lines.push(`query-needs-repair:: ${queryBlockNeedsRepair(actual, expectedBlock) ? 'yes' : 'no'}`);
       if (queryBlockNeedsRepair(actual, expectedBlock)) {
-        const fmt = isAdvancedQueryBlockContent(expectedBlock) ? 'advanced EDN (:inputs [page-id])' : 'simple #Query';
+        const fmt = isAdvancedQueryBlockContent(expectedBlock) ? 'advanced EDN DSL payload' : 'simple #Query';
         lines.push(
-          `- NOTE: run lss:50 (or let auto-repair) on ftv to rewrite dashboard queries (DB graphs use /Advanced Query ${fmt}; simple (tags)+(property) can return wrong blocks via customQuery)`,
+          `- NOTE: run lss:50 (or let auto-repair) on ftv to rewrite dashboard queries (DB graphs use /Advanced Query ${fmt}; raw simple #Query blocks can return wrong blocks via customQuery)`,
         );
       }
     }

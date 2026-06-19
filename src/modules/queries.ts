@@ -198,126 +198,19 @@ export async function dbDashboardQueryForViewAsync(
   return parts.length ? `(and ${parts.join(' ')})` : '';
 }
 
-function identToDatascriptAttr(ident: string): string {
-  const raw = String(ident ?? '').trim();
-  return raw.startsWith(':') ? raw : `:${raw}`;
-}
-
-function ednQuotedString(value: string): string {
-  return JSON.stringify(String(value ?? ''));
-}
-
-function todayJournalDay(): number {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return Number(`${y}${m}${day}`);
-}
-
-function ednStringSet(values: unknown[]): string {
-  const set = new Set<string>();
-  for (const value of values ?? []) {
-    const raw = String(value ?? '').trim();
-    if (!raw) continue;
-    set.add(raw);
-    set.add(raw.toLowerCase());
-  }
-  return `#{${[...set].map(ednQuotedString).join(' ')}}`;
-}
-
-function tagIdentityClause(tagVar: string, tag: string): string {
-  const title = ednQuotedString(tag);
-  const name = ednQuotedString(safeTag(tag).toLowerCase());
-  return `(or [${tagVar} :block/title ${title}] [${tagVar} :block/name ${name}] [${tagVar} :block/original-name ${title}])`;
-}
-
-function advancedTagClauses(tag: string, index: number): string[] {
-  return [':block/tags', ':blocks/tags'].map((attr, attrIndex) => {
-    const tagVar = `?tag${index}_${attrIndex}`;
-    return `(and [?b ${attr} ${tagVar}] ${tagIdentityClause(tagVar, tag)})`;
-  });
-}
-
-async function currentPagePropertyClause(
-  prop: string,
-  currentPageId?: number,
-  _currentPageName?: string,
-): Promise<string> {
-  const attr = identToDatascriptAttr(await resolvePropertyQueryName(prop));
-  if (currentPageId != null) {
-    return `[?b ${attr} ?current]`;
-  }
-  return `(or [?b ${attr} ?current] (and [?b ${attr} ?ref] (or [(= ?current ?ref)] [?ref :db/id ?current] [?ref :block/title ?current] [?ref :block/name ?current] [?ref :block/uuid ?current])))`;
-}
-
-function notInPropertyClauses(attr: string, values: unknown[]): string[] {
-  const blocked = ednStringSet(values);
-  if (blocked === '#{}') return [];
-  return [
-    `(not-join [?b] [?b ${attr} ?blocked] [(contains? ${blocked} ?blocked)])`,
-    `(not-join [?b] [?b ${attr} ?blocked] [?blocked :block/title ?blockedTitle] [(contains? ${blocked} ?blockedTitle)])`,
-  ];
-}
-
-async function advancedQueryWhereLinesForView(
-  view: ViewDefinition,
-  currentPageId?: number,
-  currentPageName?: string,
-): Promise<string[]> {
-  const lines: string[] = [];
-  const tags = normTagList(view.sourceTags).map(safeTag).filter(Boolean);
-
-  if (tags.length > 0) {
-    const clauses = tags.flatMap((tag, index) => advancedTagClauses(tag, index));
-    lines.push(clauses.length > 1 ? `(or ${clauses.join(' ')})` : clauses[0]);
-  }
-
-  for (const filter of view.filters ?? []) {
-    const props = filterProps(filter);
-    const op = String(filter.operator ?? '');
-    if (op === 'includesCurrentPage' && props.length) {
-      const clauses = await Promise.all(
-        props.map((prop) => currentPagePropertyClause(prop, currentPageId, currentPageName)),
-      );
-      lines.push(clauses.length > 1 ? `(or ${clauses.join(' ')})` : clauses[0]);
-      continue;
-    }
-    if (op === 'onOrBeforeToday' && props.length) {
-      const attr = identToDatascriptAttr(await resolvePropertyQueryName(props[0]));
-      lines.push(`[?b ${attr} ?today]`);
-      lines.push(`[(<= ?today ${todayJournalDay()})]`);
-      continue;
-    }
-    if (op === 'notIn' && props.length && Array.isArray(filter.value) && filter.value.length) {
-      for (const prop of props) {
-        const attr = identToDatascriptAttr(await resolvePropertyQueryName(prop));
-        lines.push(...notInPropertyClauses(attr, filter.value));
-      }
-    }
-  }
-
-  return lines;
-}
-
-/** Advanced query EDN body for DB dashboards (matches working datascript tag+venture pattern). */
+/** Advanced query EDN body for DB dashboards.
+ *
+ * DB graphs keep Logseq's /Advanced Query block structure, but use the Logseq
+ * query DSL as the `:query` payload because DB v2 plugin properties resolve
+ * correctly through that engine path while raw Datalog EDN can return 0 hits.
+ */
 export async function advancedDashboardQueryEdnForViewAsync(
   view: ViewDefinition,
-  currentPageId?: number,
-  currentPageName?: string,
+  _currentPageId?: number,
+  _currentPageName?: string,
 ): Promise<string> {
-  const whereLines = await advancedQueryWhereLinesForView(view, currentPageId, currentPageName);
-  const hasCurrent = whereLines.some((l) => l.includes('?current'));
-  const inPart = hasCurrent ? ' $ ?current' : ' $';
-  const inputsPart = hasCurrent
-    ? currentPageId != null
-      ? `\n:inputs [${currentPageId}]`
-      : '\n:inputs [:current-page]'
-    : '';
-  return `{:query [:find (pull ?b [*])
- :in${inPart}
- :where
- ${whereLines.join('\n ')}]${inputsPart}}`;
+  const body = await dbDashboardQueryForViewAsync(view, '<% current page %>');
+  return body ? `{:query ${body}}` : '';
 }
 
 /** Raw EDN for /Advanced Query (no #+BEGIN_QUERY wrapper — deprecated in DB v2). */
@@ -339,6 +232,20 @@ function extractBalancedVector(text: string, startIdx: number): string | null {
   return null;
 }
 
+function extractBalancedList(text: string, startIdx: number): string | null {
+  if (text[startIdx] !== '(') return null;
+  let depth = 0;
+  for (let i = startIdx; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '(') depth++;
+    else if (ch === ')') {
+      depth--;
+      if (depth === 0) return text.slice(startIdx, i + 1);
+    }
+  }
+  return null;
+}
+
 /** Pull the `[:find …]` vector from advanced query EDN block content. */
 export function extractAdvancedQueryVector(content: string): string | null {
   const text = queryBodyFromBlockContent(content);
@@ -347,6 +254,16 @@ export function extractAdvancedQueryVector(content: string): string | null {
   const bracketStart = text.indexOf('[', marker);
   if (bracketStart < 0) return null;
   return extractBalancedVector(text, bracketStart);
+}
+
+/** Pull a Logseq DSL s-expression from `{:query (and …)}` advanced query maps. */
+export function extractAdvancedQueryDsl(content: string): string | null {
+  const text = queryBodyFromBlockContent(content);
+  const marker = text.search(/:query\s+\(/i);
+  if (marker < 0) return null;
+  const listStart = text.indexOf('(', marker);
+  if (listStart < 0) return null;
+  return extractBalancedList(text, listStart);
 }
 
 const QUERY_CLASS_TAG_NAMES = ['logseq.class/Query', 'Query'] as const;
@@ -698,7 +615,7 @@ const INLINE_HOST_QUERY_SETUP = `
         if (cid != null) {
           var c = await getBlock(cid);
           var cc = c ? String(c[':block/content'] ?? c.content ?? c.title ?? '').trim() : '';
-          if (!c || !/^\\s*\\{[\\s\\S]*:query\\s+\\[:find/i.test(cc)) {
+          if (!c || !/^\\s*\\{[\\s\\S]*:query\\s+(?:\\[:find|\\()/i.test(cc)) {
             if (logseq.api && logseq.api.remove_block) {
               await logseq.api.remove_block(cid).catch(() => {});
             }
@@ -1599,7 +1516,7 @@ export async function runAdvancedQueryDatascriptProbe(
 export function isAdvancedQueryBlockContent(content: string): boolean {
   const text = String(content ?? '').trim();
   if (/#\+BEGIN_QUERY/i.test(text)) return true;
-  return /^\{[\s\S]*:query\s+\[:find/i.test(text);
+  return /^\{[\s\S]*:query\s+(?:\[:find|\()/i.test(text);
 }
 
 export function isLegacyBeginQueryWrapper(content: string): boolean {
@@ -1987,6 +1904,9 @@ function canonicalizeVentureFilterInQuery(text: string): string {
 }
 
 function normalizeAdvancedQueryBlockContent(content: string): string {
+  const dsl = extractAdvancedQueryDsl(content);
+  if (dsl) return normalizeQueryBlockContent(`#Query ${dsl}`);
+
   const text = String(content ?? '')
     .replace(/^#\+BEGIN_QUERY\s*/i, '')
     .replace(/#\+END_QUERY\s*$/i, '')

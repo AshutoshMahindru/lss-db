@@ -148,7 +148,7 @@ export function outlineToBatchBlock(lines: OutlineLine[]): BatchBlock | null {
 }
 
 async function queryContentForView(view: import('../registry/types').ViewDefinition): Promise<string | null> {
-  // Always prefer advanced EDN form (with :title) for templates on DB graphs.
+  // Always prefer advanced EDN form for templates on DB graphs.
   // This keeps queries as advanced even if isDbGraph() check is flaky during setup.
   try {
     const advanced = await advancedDashboardQueryEdnForViewAsync(view);

@@ -88,7 +88,7 @@ function safeTag(tag) {
 function isAdvancedQueryBlockContent(content) {
   const text = String(content ?? '').trim();
   if (/#\+BEGIN_QUERY/i.test(text)) return true;
-  return /^\{[\s\S]*:query\s+\[:find/i.test(text);
+  return /^\{[\s\S]*:query\s+(?:\[:find|\()/i.test(text);
 }
 
 function extractBalancedVector(text, startIdx) {
@@ -98,6 +98,20 @@ function extractBalancedVector(text, startIdx) {
     const ch = text[i];
     if (ch === '[') depth++;
     else if (ch === ']') {
+      depth--;
+      if (depth === 0) return text.slice(startIdx, i + 1);
+    }
+  }
+  return null;
+}
+
+function extractBalancedList(text, startIdx) {
+  if (text[startIdx] !== '(') return null;
+  let depth = 0;
+  for (let i = startIdx; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '(') depth++;
+    else if (ch === ')') {
       depth--;
       if (depth === 0) return text.slice(startIdx, i + 1);
     }
@@ -118,7 +132,23 @@ function extractAdvancedQueryVector(content) {
   return extractBalancedVector(text, bracketStart);
 }
 
+function extractAdvancedQueryDsl(content) {
+  const text = String(content ?? '')
+    .trim()
+    .replace(/^#\+BEGIN_QUERY\s*/i, '')
+    .replace(/\s*#\+END_QUERY\s*$/i, '')
+    .trim();
+  const marker = text.search(/:query\s+\(/i);
+  if (marker < 0) return null;
+  const listStart = text.indexOf('(', marker);
+  if (listStart < 0) return null;
+  return extractBalancedList(text, listStart);
+}
+
 function normalizeAdvancedQueryBlockContent(content) {
+  const dsl = extractAdvancedQueryDsl(content);
+  if (dsl) return normalizeQueryBlockContent(`#Query ${dsl}`);
+
   const text = String(content ?? '')
     .replace(/^#\+BEGIN_QUERY\s*/i, '')
     .replace(/#\+END_QUERY\s*$/i, '')
@@ -335,23 +365,15 @@ const tests = [
   () => {
     const simple =
       '(and (tags Function) (property :plugin.property.logseq-lss-db-final-plugin/venture <% current page %>))';
-    const advanced = `{:title "Functions"
-:query [:find (pull ?b [:block/uuid :block/title :block/name])
- :in $ ?current
- :where
- [?b :block/tags ?tag]
- [?tag :block/title "Function"]
- [?b :plugin.property.logseq-lss-db-final-plugin/venture ?current]]
-:inputs [3505]
-:collapsed? false}`;
+    const advanced = `{:query (and (tags Function) (property :plugin.property.logseq-lss-db-final-plugin/venture <% current page %>))}`;
     if (!queryBlockNeedsRepair(simple, advanced)) {
       throw new Error('DB dashboard should repair simple query to advanced EDN');
     }
     if (queryBlockNeedsRepair(advanced, advanced)) {
       throw new Error('advanced dashboard query should not need repair');
     }
-    if (!advanced.includes('[?b :plugin.property.logseq-lss-db-final-plugin/venture ?current]')) {
-      throw new Error('advanced venture clause should bind ?current entity id directly');
+    if (!advanced.includes('(property :plugin.property.logseq-lss-db-final-plugin/venture <% current page %>)')) {
+      throw new Error('advanced venture clause should keep Logseq DSL current-page binding');
     }
   },
   () => {
@@ -478,20 +500,12 @@ const tests = [
     }
   },
   () => {
-    const advanced = `{:title "Functions"
-:query [:find (pull ?b [:block/uuid :block/title :block/name])
- :in $ ?current
- :where
- [?b :block/tags ?tag]
- [?tag :block/title "Function"]
- [?b :plugin.property.logseq-lss-db-final-plugin/venture ?current]]
-:inputs [3505]
-:collapsed? false}`;
-    const vector = extractAdvancedQueryVector(advanced);
-    if (!vector?.includes(':plugin.property.logseq-lss-db-final-plugin/venture ?current]')) {
-      throw new Error('extractAdvancedQueryVector should pull full datalog vector');
+    const advanced = `{:query (and (tags Function) (property :plugin.property.logseq-lss-db-final-plugin/venture <% current page %>))}`;
+    const dsl = extractAdvancedQueryDsl(advanced);
+    if (!dsl?.includes('(property :plugin.property.logseq-lss-db-final-plugin/venture <% current page %>)')) {
+      throw new Error('extractAdvancedQueryDsl should pull full DSL expression');
     }
-    if (!/\?current\b/.test(vector)) throw new Error('extracted vector should include ?current binding');
+    if (extractAdvancedQueryVector(advanced) != null) throw new Error('DSL advanced query should not expose datalog vector');
   },
   () => {
     function normalizeKeywordPropertyName(name) {
@@ -507,7 +521,7 @@ const tests = [
   () => {
     function isQueryLikeContent(content) {
       const text = String(content ?? '').trim();
-      const isAdvanced = /^\{[\s\S]*:query\s+\[:find/i.test(text);
+      const isAdvanced = /^\{[\s\S]*:query\s+(?:\[:find|\()/i.test(text);
       const isSimple = /^(\(and\s|\(or\s|\(tags\s|\(page-tags\s|\(property\s|\(page-property\s)/.test(
         text.replace(/^#Query\s+/, '').replace(/\s+/g, ' ').toLowerCase(),
       );
@@ -547,14 +561,7 @@ const tests = [
     function findAllQueryBlocksInSection(sectionBlock) {
       return (sectionBlock?.children ?? []).filter((block) => isQueryLikeBlockSnapshot(block));
     }
-    const edn = `{:title "Functions"
-:query [:find (pull ?b [:block/uuid])
- :in $ ?current
- :where
- [?b :block/tags ?tag]
- [?tag :block/title "Function"]
- [?b :plugin.property.logseq-lss-db-final-plugin/venture ?current]]
-:inputs [3505]}`;
+    const edn = `{:query (and (tags Function) (property :plugin.property.logseq-lss-db-final-plugin/venture <% current page %>))}`;
     const section = {
       children: [
         {
@@ -581,14 +588,7 @@ const tests = [
       if (struct.rawEdnInParentContent) score -= 5;
       return score;
     }
-    const expected = `{:title "Functions"
-:query [:find (pull ?b [:block/uuid])
- :in $ ?current
- :where
- [?b :block/tags ?tag]
- [?tag :block/title "Function"]
- [?b :plugin.property.logseq-lss-db-final-plugin/venture ?current]]
-:inputs [3505]}`;
+    const expected = `{:query (and (tags Function) (property :plugin.property.logseq-lss-db-final-plugin/venture <% current page %>))}`;
     const good = scoreQueryBlockCandidate(
       {
         hasQueryClassTag: true,
@@ -621,14 +621,7 @@ const tests = [
   },
   () => {
     const advanced = `#+BEGIN_QUERY
-{:title "Functions"
- :query [:find (pull ?b [:block/uuid])
-  :in $ ?current
-  :where
-  [?b :block/tags ?tag]
-  [?tag :block/title "Function"]
-  [?b :plugin.property.logseq-lss-db-final-plugin/venture ?current]]
- :inputs [3505]}
+{:query (and (tags Function) (property :plugin.property.logseq-lss-db-final-plugin/venture <% current page %>))}
 #+END_QUERY`;
     const simple =
       '(and (tags function) (property venture <% current page %>))';
@@ -640,16 +633,10 @@ const tests = [
     }
   },
   () => {
-    const advanced = `{:query [:find (pull ?b [*])
- :in $ ?current
- :where
- (or (and [?b :block/tags ?tag0_0] (or [?tag0_0 :block/title "Function"] [?tag0_0 :block/name "function"]))
-     (and [?b :blocks/tags ?tag0_1] (or [?tag0_1 :block/title "Function"] [?tag0_1 :block/name "function"])))
- [?b :plugin.property.logseq-lss-db-final-plugin/venture ?current]]
-:inputs [11182]}`;
+    const advanced = `{:query (and (tags Function) (property :plugin.property.logseq-lss-db-final-plugin/venture <% current page %>))}`;
     const simple = '(and (tags function) (property venture <% current page %>))';
     if (!queriesEquivalent(advanced, simple)) {
-      throw new Error('advanced generated tag vars + numeric venture input should normalize');
+      throw new Error('advanced DSL query should normalize');
     }
   },
   () => {
@@ -660,18 +647,12 @@ const tests = [
      (and [?b :blocks/tags ?tag0_1] (or [?tag0_1 :block/title "Function"] [?tag0_1 :block/name "function"])))
  (or [?b :plugin.property.logseq-lss-db-final-plugin/venture 3505]
      [?b :plugin.property.logseq-lss-db-final-plugin/venture "FTV"])]}`;
-    const expected = `{:query [:find (pull ?b [*])
- :in $ ?current
- :where
- (or (and [?b :block/tags ?tag0_0] (or [?tag0_0 :block/title "Function"] [?tag0_0 :block/name "function"]))
-     (and [?b :blocks/tags ?tag0_1] (or [?tag0_1 :block/title "Function"] [?tag0_1 :block/name "function"])))
- [?b :plugin.property.logseq-lss-db-final-plugin/venture ?current]]
-:inputs [3505]}`;
+    const expected = `{:query (and (tags Function) (property :plugin.property.logseq-lss-db-final-plugin/venture <% current page %>))}`;
     if (!queriesEquivalent(stored, expected)) {
       throw new Error('stale and expected advanced queries should remain semantically equivalent');
     }
     if (!queryBlockNeedsRepair(stored, expected)) {
-      throw new Error('stale advanced OR query should need numeric-input vector repair');
+      throw new Error('stale advanced OR query should need advanced DSL repair');
     }
   },
   () => {
@@ -682,21 +663,15 @@ const tests = [
  [?tag :block/title "Function"]
  [?b :plugin.property.logseq-lss-db-final-plugin/venture ?current]]
 :inputs [:current-page]}`;
-    const expected = `{:query [:find (pull ?b [*])
- :in $ ?current
- :where
- [?b :block/tags ?tag]
- [?tag :block/title "Function"]
- [?b :plugin.property.logseq-lss-db-final-plugin/venture ?current]]
-:inputs [3505]}`;
+    const expected = `{:query (and (tags Function) (property :plugin.property.logseq-lss-db-final-plugin/venture <% current page %>))}`;
     if (!queriesEquivalent(stale, expected)) {
-      throw new Error('stale :current-page and numeric input advanced queries should be semantically equivalent');
+      throw new Error('stale :current-page and advanced DSL queries should be semantically equivalent');
     }
     if (!queryBlockNeedsRepair(stale, expected)) {
-      throw new Error('stale :current-page advanced query should need numeric input repair');
+      throw new Error('stale :current-page advanced query should need advanced DSL repair');
     }
     if (queryBlockNeedsRepair(expected, expected)) {
-      throw new Error('numeric input advanced query should not need repair');
+      throw new Error('advanced DSL query should not need repair');
     }
   },
 ];
