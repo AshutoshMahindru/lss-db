@@ -210,15 +210,27 @@ function isLegacyBeginQueryWrapper(content) {
   return /#\+BEGIN_QUERY/i.test(String(content ?? ''));
 }
 
+function queryBodyFromBlockContent(content) {
+  const text = String(content ?? '').trim();
+  if (/^#\+BEGIN_QUERY/i.test(text)) {
+    return text.replace(/^#\+BEGIN_QUERY\s*/i, '').replace(/\s*#\+END_QUERY\s*$/i, '').trim();
+  }
+  return queryBodyFromContent(text);
+}
+
+function normalizeAdvancedQueryVectorForRepair(content) {
+  return String(extractAdvancedQueryVector(content) ?? queryBodyFromBlockContent(content))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function queryBlockNeedsRepair(stored, expected) {
   if (isLegacyBeginQueryWrapper(stored)) return true;
   const storedAdvanced = isAdvancedQueryBlockContent(stored);
   const expectedAdvanced = isAdvancedQueryBlockContent(expected);
   if (storedAdvanced !== expectedAdvanced) return true;
   if (expectedAdvanced) {
-    const storedNorm = normalizeAdvancedQueryBlockContent(stored).replace(/\s+/g, ' ').trim();
-    const expectedNorm = normalizeAdvancedQueryBlockContent(expected).replace(/\s+/g, ' ').trim();
-    return storedNorm !== expectedNorm;
+    return normalizeAdvancedQueryVectorForRepair(stored) !== normalizeAdvancedQueryVectorForRepair(expected);
   }
   const expectedBody = queryBodyFromContent(expected);
   if (!queriesEquivalent(stored, expectedBody)) return true;
@@ -623,6 +635,27 @@ const tests = [
     const simple = '(and (tags function) (property venture <% current page %>))';
     if (!queriesEquivalent(advanced, simple)) {
       throw new Error('advanced generated tag vars + numeric venture id should normalize');
+    }
+  },
+  () => {
+    const stored = `{:query [:find (pull ?b [*])
+ :in $
+ :where
+ (or (and [?b :block/tags ?tag0_0] (or [?tag0_0 :block/title "Function"] [?tag0_0 :block/name "function"]))
+     (and [?b :blocks/tags ?tag0_1] (or [?tag0_1 :block/title "Function"] [?tag0_1 :block/name "function"])))
+ (or [?b :plugin.property.logseq-lss-db-final-plugin/venture 3505]
+     [?b :plugin.property.logseq-lss-db-final-plugin/venture "FTV"])]}`;
+    const expected = `{:query [:find (pull ?b [*])
+ :in $
+ :where
+ (or (and [?b :block/tags ?tag0_0] (or [?tag0_0 :block/title "Function"] [?tag0_0 :block/name "function"]))
+     (and [?b :blocks/tags ?tag0_1] (or [?tag0_1 :block/title "Function"] [?tag0_1 :block/name "function"])))
+ [?b :plugin.property.logseq-lss-db-final-plugin/venture 3505]]}`;
+    if (!queriesEquivalent(stored, expected)) {
+      throw new Error('stale and expected advanced queries should remain semantically equivalent');
+    }
+    if (!queryBlockNeedsRepair(stored, expected)) {
+      throw new Error('stale advanced OR query should need direct-id vector repair');
     }
   },
 ];

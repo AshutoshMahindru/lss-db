@@ -2086,6 +2086,12 @@ function queryUsesPropertyIdents(content: string): boolean {
   return /\(property\s+:(?:plugin|user)\.property[\w.-]*\//i.test(String(content ?? ''));
 }
 
+function normalizeAdvancedQueryVectorForRepair(content: string): string {
+  return String(extractAdvancedQueryVector(content) ?? queryBodyFromBlockContent(content))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /** True when repair should rewrite the block (semantic drift or non-canonical page-ref casing). */
 export function queryBlockNeedsRepair(stored: string, expected: string): boolean {
   if (isLegacyBeginQueryWrapper(stored)) return true;
@@ -2093,9 +2099,7 @@ export function queryBlockNeedsRepair(stored: string, expected: string): boolean
   const expectedAdvanced = isAdvancedQueryBlockContent(expected);
   if (storedAdvanced !== expectedAdvanced) return true;
   if (expectedAdvanced) {
-    const storedNorm = normalizeAdvancedQueryBlockContent(stored).replace(/\s+/g, ' ').trim();
-    const expectedNorm = normalizeAdvancedQueryBlockContent(expected).replace(/\s+/g, ' ').trim();
-    return storedNorm !== expectedNorm;
+    return normalizeAdvancedQueryVectorForRepair(stored) !== normalizeAdvancedQueryVectorForRepair(expected);
   }
   const expectedBody = queryBodyFromContent(expected);
   if (!queriesEquivalent(stored, expectedBody)) return true;
