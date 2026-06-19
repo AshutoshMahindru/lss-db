@@ -743,6 +743,26 @@ async function diagnoseFunctionCandidates(venturePageName: string): Promise<stri
   return lines;
 }
 
+async function pageHasIncomingFunctionReference(pageName: string, pageId: unknown): Promise<boolean> {
+  if (!logseq.Editor.getTagObjects) return false;
+  const functions = await logseq.Editor.getTagObjects('Function').catch(() => null);
+  for (const fn of functions ?? []) {
+    const fnBlockId = blockId(fn);
+    if (!fnBlockId) continue;
+    const props = await readAllPageProperties(String(tagObjectLabel(fn as Record<string, unknown>) || fnBlockId), fnBlockId);
+    if (isSetupFunctionTagNoise(String(tagObjectLabel(fn as Record<string, unknown>) || ''), props)) continue;
+    const relationshipValue = await readRelationshipPropertyValue(fnBlockId, 'venture');
+    const visibleValue = getCanonicalProp(props, 'venture');
+    if (
+      ventureValueIsPageRef(relationshipValue, pageName, pageId) ||
+      ventureValueIsPageRef(visibleValue, pageName, pageId)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export async function diagnoseCurrentPage(r: Result): Promise<void> {
   const pageName = await currentPageName();
   if (!pageName) {
@@ -798,6 +818,10 @@ export async function diagnoseCurrentPage(r: Result): Promise<void> {
   }
   lines.push('');
   const taggedObject = classTags.map((tag) => objectByName(tag)).find(Boolean);
+  const incomingFunctionReference = await pageHasIncomingFunctionReference(
+    visibleName,
+    (page as Record<string, unknown>).id,
+  );
   const inferredType =
     taggedObject?.name ??
     (objectType.includes('Function')
@@ -808,7 +832,13 @@ export async function diagnoseCurrentPage(r: Result): Promise<void> {
           ? 'Function'
           : classTags.includes('Venture')
             ? 'Venture'
-            : null);
+            : incomingFunctionReference
+              ? 'Venture'
+              : null);
+  if (incomingFunctionReference && inferredType === 'Venture' && !classTags.includes('Venture')) {
+    lines.push('- Inference: Function pages point their venture property at this page; run lss:50 to bootstrap #Venture and page properties.');
+    lines.push('');
+  }
 
   lines.push('## Query requirements');
   if (inferredType === 'Venture') {
