@@ -224,13 +224,27 @@ function normalizeAdvancedQueryVectorForRepair(content) {
     .trim();
 }
 
+function extractAdvancedQueryInputs(content) {
+  const body = queryBodyFromBlockContent(content);
+  const match = body.match(/:inputs\s+(\[[\s\S]*?\])/i);
+  return String(match?.[1] ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeAdvancedQueryForRepair(content) {
+  const vector = normalizeAdvancedQueryVectorForRepair(content);
+  const inputs = extractAdvancedQueryInputs(content);
+  return `${vector} ::inputs ${inputs}`;
+}
+
 function queryBlockNeedsRepair(stored, expected) {
   if (isLegacyBeginQueryWrapper(stored)) return true;
   const storedAdvanced = isAdvancedQueryBlockContent(stored);
   const expectedAdvanced = isAdvancedQueryBlockContent(expected);
   if (storedAdvanced !== expectedAdvanced) return true;
   if (expectedAdvanced) {
-    return normalizeAdvancedQueryVectorForRepair(stored) !== normalizeAdvancedQueryVectorForRepair(expected);
+    return normalizeAdvancedQueryForRepair(stored) !== normalizeAdvancedQueryForRepair(expected);
   }
   const expectedBody = queryBodyFromContent(expected);
   if (!queriesEquivalent(stored, expectedBody)) return true;
@@ -328,7 +342,7 @@ const tests = [
  [?b :block/tags ?tag]
  [?tag :block/title "Function"]
  [?b :plugin.property.logseq-lss-db-final-plugin/venture ?current]]
-:inputs [:current-page]
+:inputs [3505]
 :collapsed? false}`;
     if (!queryBlockNeedsRepair(simple, advanced)) {
       throw new Error('DB dashboard should repair simple query to advanced EDN');
@@ -471,7 +485,7 @@ const tests = [
  [?b :block/tags ?tag]
  [?tag :block/title "Function"]
  [?b :plugin.property.logseq-lss-db-final-plugin/venture ?current]]
-:inputs [:current-page]
+:inputs [3505]
 :collapsed? false}`;
     const vector = extractAdvancedQueryVector(advanced);
     if (!vector?.includes(':plugin.property.logseq-lss-db-final-plugin/venture ?current]')) {
@@ -540,7 +554,7 @@ const tests = [
  [?b :block/tags ?tag]
  [?tag :block/title "Function"]
  [?b :plugin.property.logseq-lss-db-final-plugin/venture ?current]]
-:inputs [:current-page]}`;
+:inputs [3505]}`;
     const section = {
       children: [
         {
@@ -574,7 +588,7 @@ const tests = [
  [?b :block/tags ?tag]
  [?tag :block/title "Function"]
  [?b :plugin.property.logseq-lss-db-final-plugin/venture ?current]]
-:inputs [:current-page]}`;
+:inputs [3505]}`;
     const good = scoreQueryBlockCandidate(
       {
         hasQueryClassTag: true,
@@ -614,7 +628,7 @@ const tests = [
   [?b :block/tags ?tag]
   [?tag :block/title "Function"]
   [?b :plugin.property.logseq-lss-db-final-plugin/venture ?current]]
- :inputs [:current-page]}
+ :inputs [3505]}
 #+END_QUERY`;
     const simple =
       '(and (tags function) (property venture <% current page %>))';
@@ -627,14 +641,15 @@ const tests = [
   },
   () => {
     const advanced = `{:query [:find (pull ?b [*])
- :in $
+ :in $ ?current
  :where
  (or (and [?b :block/tags ?tag0_0] (or [?tag0_0 :block/title "Function"] [?tag0_0 :block/name "function"]))
      (and [?b :blocks/tags ?tag0_1] (or [?tag0_1 :block/title "Function"] [?tag0_1 :block/name "function"])))
- [?b :plugin.property.logseq-lss-db-final-plugin/venture 11182]]}`;
+ [?b :plugin.property.logseq-lss-db-final-plugin/venture ?current]]
+:inputs [11182]}`;
     const simple = '(and (tags function) (property venture <% current page %>))';
     if (!queriesEquivalent(advanced, simple)) {
-      throw new Error('advanced generated tag vars + numeric venture id should normalize');
+      throw new Error('advanced generated tag vars + numeric venture input should normalize');
     }
   },
   () => {
@@ -646,16 +661,42 @@ const tests = [
  (or [?b :plugin.property.logseq-lss-db-final-plugin/venture 3505]
      [?b :plugin.property.logseq-lss-db-final-plugin/venture "FTV"])]}`;
     const expected = `{:query [:find (pull ?b [*])
- :in $
+ :in $ ?current
  :where
  (or (and [?b :block/tags ?tag0_0] (or [?tag0_0 :block/title "Function"] [?tag0_0 :block/name "function"]))
      (and [?b :blocks/tags ?tag0_1] (or [?tag0_1 :block/title "Function"] [?tag0_1 :block/name "function"])))
- [?b :plugin.property.logseq-lss-db-final-plugin/venture 3505]]}`;
+ [?b :plugin.property.logseq-lss-db-final-plugin/venture ?current]]
+:inputs [3505]}`;
     if (!queriesEquivalent(stored, expected)) {
       throw new Error('stale and expected advanced queries should remain semantically equivalent');
     }
     if (!queryBlockNeedsRepair(stored, expected)) {
-      throw new Error('stale advanced OR query should need direct-id vector repair');
+      throw new Error('stale advanced OR query should need numeric-input vector repair');
+    }
+  },
+  () => {
+    const stale = `{:query [:find (pull ?b [*])
+ :in $ ?current
+ :where
+ [?b :block/tags ?tag]
+ [?tag :block/title "Function"]
+ [?b :plugin.property.logseq-lss-db-final-plugin/venture ?current]]
+:inputs [:current-page]}`;
+    const expected = `{:query [:find (pull ?b [*])
+ :in $ ?current
+ :where
+ [?b :block/tags ?tag]
+ [?tag :block/title "Function"]
+ [?b :plugin.property.logseq-lss-db-final-plugin/venture ?current]]
+:inputs [3505]}`;
+    if (!queriesEquivalent(stale, expected)) {
+      throw new Error('stale :current-page and numeric input advanced queries should be semantically equivalent');
+    }
+    if (!queryBlockNeedsRepair(stale, expected)) {
+      throw new Error('stale :current-page advanced query should need numeric input repair');
+    }
+    if (queryBlockNeedsRepair(expected, expected)) {
+      throw new Error('numeric input advanced query should not need repair');
     }
   },
 ];

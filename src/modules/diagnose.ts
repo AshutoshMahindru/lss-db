@@ -659,7 +659,7 @@ async function runLiveQueryProbe(
 
     if (storedProbe && isAdvancedQueryBlockContent(storedProbe.body) && storedDsHit) {
       lines.push(
-        `- live-query-note/stored-advanced: plugin customQuery cannot bind :inputs [:current-page]; datascript with venture id ${venturePageId ?? '?'} => ${storedDsHit.count} hit(s)`,
+        `- live-query-note/stored-advanced: datascript with venture id ${venturePageId ?? '?'} => ${storedDsHit.count} hit(s); lss:50 should keep advanced queries bound through numeric :inputs [page-id]`,
       );
     }
     if (!anyHits) {
@@ -984,7 +984,7 @@ export async function diagnoseCurrentPage(r: Result): Promise<void> {
       );
       lines.push(`query-needs-repair:: ${queryBlockNeedsRepair(actual, expectedBlock) ? 'yes' : 'no'}`);
       if (queryBlockNeedsRepair(actual, expectedBlock)) {
-        const fmt = isAdvancedQueryBlockContent(expectedBlock) ? 'advanced EDN (:inputs [:current-page])' : 'simple #Query';
+        const fmt = isAdvancedQueryBlockContent(expectedBlock) ? 'advanced EDN (:inputs [page-id])' : 'simple #Query';
         lines.push(
           `- NOTE: run lss:50 (or let auto-repair) on ftv to rewrite dashboard queries (DB graphs use /Advanced Query ${fmt}; simple (tags)+(property) can return wrong blocks via customQuery)`,
         );

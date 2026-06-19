@@ -246,7 +246,7 @@ async function currentPagePropertyClause(
 ): Promise<string> {
   const attr = identToDatascriptAttr(await resolvePropertyQueryName(prop));
   if (currentPageId != null) {
-    return `[?b ${attr} ${currentPageId}]`;
+    return `[?b ${attr} ?current]`;
   }
   return `(or [?b ${attr} ?current] (and [?b ${attr} ?ref] (or [(= ?current ?ref)] [?ref :db/id ?current] [?ref :block/title ?current] [?ref :block/name ?current] [?ref :block/uuid ?current])))`;
 }
@@ -300,27 +300,20 @@ async function advancedQueryWhereLinesForView(
   return lines;
 }
 
-/** Advanced query EDN body for DB dashboards (matches working datascript tag+venture pattern).
- *
- * On DB graphs, we hardcode the current page's numeric :db/id (when known) for
- * includesCurrentPage filters instead of using :inputs [:current-page] / ?current.
- * Reason: Logseq's live query engine (customQuery, datascript-current-page, stored
- * paths used by in-page /Query blocks and dashboard sections) often cannot reliably
- * bind ?current for custom plugin properties on DB graphs (see probe notes).
- * Hardcoded literal makes the filter self-contained and matches what direct
- * datascript probes succeed with.
- *
- * Use flat clause style to match proven probe patterns.
- */
+/** Advanced query EDN body for DB dashboards (matches working datascript tag+venture pattern). */
 export async function advancedDashboardQueryEdnForViewAsync(
   view: ViewDefinition,
   currentPageId?: number,
   currentPageName?: string,
 ): Promise<string> {
   const whereLines = await advancedQueryWhereLinesForView(view, currentPageId, currentPageName);
-  const hasCurrent = whereLines.some(l => l.includes('?current'));
+  const hasCurrent = whereLines.some((l) => l.includes('?current'));
   const inPart = hasCurrent ? ' $ ?current' : ' $';
-  const inputsPart = hasCurrent ? '\n:inputs [:current-page]' : '';
+  const inputsPart = hasCurrent
+    ? currentPageId != null
+      ? `\n:inputs [${currentPageId}]`
+      : '\n:inputs [:current-page]'
+    : '';
   return `{:query [:find (pull ?b [*])
  :in${inPart}
  :where
@@ -2092,6 +2085,20 @@ function normalizeAdvancedQueryVectorForRepair(content: string): string {
     .trim();
 }
 
+function extractAdvancedQueryInputs(content: string): string {
+  const body = queryBodyFromBlockContent(content);
+  const match = body.match(/:inputs\s+(\[[\s\S]*?\])/i);
+  return String(match?.[1] ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeAdvancedQueryForRepair(content: string): string {
+  const vector = normalizeAdvancedQueryVectorForRepair(content);
+  const inputs = extractAdvancedQueryInputs(content);
+  return `${vector} ::inputs ${inputs}`;
+}
+
 /** True when repair should rewrite the block (semantic drift or non-canonical page-ref casing). */
 export function queryBlockNeedsRepair(stored: string, expected: string): boolean {
   if (isLegacyBeginQueryWrapper(stored)) return true;
@@ -2099,7 +2106,7 @@ export function queryBlockNeedsRepair(stored: string, expected: string): boolean
   const expectedAdvanced = isAdvancedQueryBlockContent(expected);
   if (storedAdvanced !== expectedAdvanced) return true;
   if (expectedAdvanced) {
-    return normalizeAdvancedQueryVectorForRepair(stored) !== normalizeAdvancedQueryVectorForRepair(expected);
+    return normalizeAdvancedQueryForRepair(stored) !== normalizeAdvancedQueryForRepair(expected);
   }
   const expectedBody = queryBodyFromContent(expected);
   if (!queriesEquivalent(stored, expectedBody)) return true;
