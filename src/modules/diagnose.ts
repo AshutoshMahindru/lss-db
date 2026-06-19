@@ -610,10 +610,12 @@ async function runLiveQueryProbe(
 
     const storedProbe = variants.find((v) => v.label === 'stored');
     let storedDsHit: { channel: string; count: number; hits: unknown[] } | undefined;
+    let storedBestForNote: { channel: string; count: number; hits: unknown[] } | undefined;
     if (storedProbe) {
       const storedAttempts = await runQueryEngineCandidates(storedProbe.body, venturePageId);
       storedDsHit = storedAttempts.find((a) => a.channel === 'datascript-current-page' && a.count > 0);
       const storedBest = pickBestQueryAttempt(storedAttempts);
+      storedBestForNote = storedBest;
       const dslHit = storedAttempts.find((a) => a.channel === 'dsl' && a.count > 0);
       const customHit = storedAttempts.find((a) => a.channel === 'custom' && a.count > 0);
       if (dslHit && customHit) {
@@ -674,9 +676,13 @@ async function runLiveQueryProbe(
       lines.push(
         '- live-query-note: DB.q/customQuery returned 0 for plugin probes (expected for advanced EDN); datascript proves data exists — if UI is empty, run lss:50 or wait for auto-repair to add #Query tag on the query block',
       );
+    } else if (storedBestForNote?.count && storedBestForNote.count > 0) {
+      lines.push(
+        `- live-query-note: stored dashboard query resolves via ${storedBestForNote.channel}; the Functions section should list ${storedBestForNote.count} matching page(s)`,
+      );
     } else {
       lines.push(
-        '- live-query-note: customQuery is the engine path that matches in-page /Query blocks; DB.q alone may return 0 from plugins',
+        '- live-query-note: probe variants returned hits, but the stored dashboard query did not; run lss:50 to rebuild the stored query block',
       );
     }
   } catch (error) {

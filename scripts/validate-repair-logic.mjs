@@ -674,6 +674,25 @@ const tests = [
       throw new Error('advanced DSL query should not need repair');
     }
   },
+  () => {
+    function liveQueryNote(anyHits, storedBestForNote) {
+      if (!anyHits) {
+        return 'DB.q/customQuery returned 0 for plugin probes';
+      }
+      if (storedBestForNote?.count && storedBestForNote.count > 0) {
+        return `stored dashboard query resolves via ${storedBestForNote.channel}`;
+      }
+      return 'probe variants returned hits, but the stored dashboard query did not';
+    }
+    const note = liveQueryNote(true, { channel: 'advanced-dsl', count: 2 });
+    if (!note.includes('advanced-dsl')) {
+      throw new Error('successful stored advanced DSL query should get the success note');
+    }
+    const fallback = liveQueryNote(true, { channel: 'none', count: 0 });
+    if (!fallback.includes('stored dashboard query did not')) {
+      throw new Error('variant-only hits should still warn about stored query failure');
+    }
+  },
 ];
 
 for (const [i, test] of tests.entries()) {
