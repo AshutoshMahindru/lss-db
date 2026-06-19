@@ -22,6 +22,7 @@ import {
   blockId,
   currentPageName,
   ensureTagByName,
+  ensurePage,
   getBlocks,
   getPage,
   resolveVisibleNodeToken,
@@ -29,8 +30,9 @@ import {
   walkBlocks,
 } from '../core/editor';
 import { formatError, sleep } from '../core/runner';
-import { fixPhantomTagParenSyntax, safePageName, safeTag } from '../core/names';
+import { fixPhantomTagParenSyntax, safePageName, safeTag, tsKey } from '../core/names';
 import type { Result } from '../core/types';
+import type { RegistryObject } from '../registry/types';
 import { allObjects, propertySpec, templateDefByObjectType } from '../registry';
 import {
   configureDbAdvancedQueryBlock,
@@ -209,6 +211,188 @@ function inferCurrentPageObjectType(pageName: string, blocks: any[]): string | n
 
 const RELATIONSHIP_PROPERTIES = new Set(relationshipPropertyNames());
 const SKIP_PROMOTE_KEYS = new Set(['tags', 'block/tags']);
+
+function pageRecordIsJournal(page: any, pageName: string): boolean {
+  if (!page) return false;
+  const type = String(page.type ?? page[':block/type'] ?? '').toLowerCase();
+  if (type === 'journal') return true;
+  if (page.journal === true || page['journal?'] === true || page[':block/journal?'] === true) return true;
+  if (page.journalDay != null || page['journal-day'] != null || page[':block/journal-day'] != null) return true;
+  const name = String(pageName ?? page.name ?? page.originalName ?? page.title ?? '').trim();
+  return /^\d{4}[-_/]\d{2}[-_/]\d{2}$/.test(name);
+}
+
+function tagNameFromObject(tag: unknown): string | null {
+  if (typeof tag === 'string') return safeTag(tag);
+  if (tag && typeof tag === 'object') {
+    const record = tag as Record<string, unknown>;
+    const name = record.name ?? record.originalName ?? record.title ?? record.ident;
+    if (name) return safeTag(String(name));
+  }
+  return null;
+}
+
+function blockLssObject(block: any): RegistryObject | null {
+  const text = String(block?.content ?? block?.title ?? '');
+  if (/#Template\b/i.test(text)) return null;
+  const candidates = new Set<string>();
+  const tags = block?.tags ?? block?.properties?.tags;
+  if (Array.isArray(tags)) {
+    for (const tag of tags) {
+      const name = tagNameFromObject(tag);
+      if (name) candidates.add(name);
+    }
+  }
+  for (const tag of repairTagsFromValue(text)) candidates.add(tag);
+  for (const candidate of candidates) {
+    const type = canonicalObjectTypeToken(candidate);
+    if (!type) continue;
+    const obj = objectByName(type);
+    if (obj?.nodeKind === 'page') return obj;
+  }
+  return null;
+}
+
+function stripEntityTagsFromTitle(content: string, obj: RegistryObject): string {
+  const tag = safeTag(obj.tag);
+  return String(content ?? '')
+    .split(/\r?\n/)[0]
+    .replace(/^[-*]\s+/, '')
+    .replace(new RegExp(`#\\[\\[${tag}\\]\\]`, 'gi'), '')
+    .replace(new RegExp(`#${tag}\\b`, 'gi'), '')
+    .replace(/#Template\b/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .trim();
+}
+
+function entityPageNameFromBlock(block: any, obj: RegistryObject): string {
+  const rawTitle = stripEntityTagsFromTitle(String(block?.content ?? block?.title ?? ''), obj)
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (rawTitle && rawTitle !== obj.name && !/::$/.test(rawTitle)) return safePageName(rawTitle);
+  return `New ${obj.name} - ${tsKey()}`;
+}
+
+function blockChildrenOutline(block: any, rootTitle: string, obj: RegistryObject): string {
+  const lines: string[] = [`${rootTitle} #${safeTag(obj.tag)}`];
+  const walk = (children: any[], depth: number) => {
+    for (const child of children ?? []) {
+      const content = String(child?.content ?? child?.title ?? '').trim();
+      if (content) lines.push(`${'  '.repeat(depth)}- ${content}`);
+      walk(child?.children ?? [], depth + 1);
+    }
+  };
+  walk(block?.children ?? [], 1);
+  return lines.join('\n');
+}
+
+function templateOutlineForEntityPage(obj: RegistryObject, title: string): string {
+  const template = templateDefByObjectType(obj.name);
+  const tag = safeTag(obj.tag);
+  if (!template?.body) return `${title} #${tag}\n\nProperties\n\nNotes\n- `;
+  const bodyLines = String(template.body)
+    .split(/\r?\n/)
+    .filter((line) => line.trim());
+  const out: string[] = [`${title} #${tag}`];
+  for (const line of bodyLines.slice(1)) out.push(line);
+  return out.join('\n');
+}
+
+async function materializedPropertyMap(
+  result: Result,
+  block: any,
+  sourceBlockId: string | null,
+  obj: RegistryObject,
+): Promise<Map<string, string>> {
+  const props = new Map<string, string>();
+  const schemaProps = new Set(uniqueObjectProps(obj));
+  for (const key of schemaProps) props.set(key, defaultPropertyValue(key, obj) || '');
+  for (const item of walkBlocks([block])) {
+    for (const line of repairPropertyLines(item?.content)) {
+      const key = canonicalPropertyKey(line.property);
+      if (schemaProps.has(key) || key === 'lss-object-type') props.set(key, line.value);
+    }
+  }
+  if (sourceBlockId && logseq.Editor.getBlockProperties) {
+    const sourceProps =
+      ((await logseq.Editor.getBlockProperties(sourceBlockId).catch(() => null)) ?? {}) as Record<string, unknown>;
+    for (const [rawKey, rawValue] of Object.entries(sourceProps)) {
+      const key = canonicalPropertyKey(rawKey);
+      if (!schemaProps.has(key) && key !== 'lss-object-type') continue;
+      const value = await dbPropertyValueToRepairString(result, key, rawValue);
+      if (value) props.set(key, value);
+    }
+  }
+  props.set('lss-object-type', obj.name);
+  return props;
+}
+
+async function cleanJournalEntitySourceBlock(
+  result: Result,
+  block: any,
+  sourceBlockId: string | null,
+  pageName: string,
+  obj: RegistryObject,
+): Promise<void> {
+  if (!sourceBlockId) return;
+  const tagObj = await ensureTagByName(result, safeTag(obj.tag));
+  const tagId = tagObj ? entityIdentity(tagObj) : null;
+  if (tagId != null && logseq.Editor.removeBlockTag) {
+    await logseq.Editor.removeBlockTag(sourceBlockId, tagId).catch(() => null);
+  }
+  if (logseq.Editor.removeBlockProperty) {
+    for (const key of [...uniqueObjectProps(obj), 'lss-object-type', 'lss-object-tag']) {
+      await logseq.Editor.removeBlockProperty(sourceBlockId, canonicalPropertyKey(key)).catch(() => null);
+    }
+  }
+  await updateBlockContent(result, block, `[[${pageName}]]`, `Replace journal entity tag block with page link for ${pageName}`);
+}
+
+async function materializeJournalEntityBlocks(
+  result: Result,
+  journalPageName: string,
+  blocks: any[],
+): Promise<number> {
+  let count = 0;
+  for (const block of walkBlocks(blocks)) {
+    const obj = blockLssObject(block);
+    if (!obj) continue;
+    const sourceBlockId = blockId(block);
+    const entityPageName = entityPageNameFromBlock(block, obj);
+    const props = await materializedPropertyMap(result, block, sourceBlockId, obj);
+    await ensurePage(result, entityPageName, Object.fromEntries(props));
+    const page = await getPage(entityPageName);
+    const pageBlockId = blockId(page);
+    if (pageBlockId) {
+      await repairApplyTagToPage(result, pageBlockId, safeTag(obj.tag));
+      for (const [key, value] of props) await repairUpsertPageProperty(result, pageBlockId, key, value);
+    }
+    const body =
+      block?.children?.length
+        ? blockChildrenOutline(block, entityPageName, obj)
+        : templateOutlineForEntityPage(obj, entityPageName);
+    await ensurePage(result, entityPageName);
+    if (logseq.Editor.appendBlockInPage) {
+      const existing = await getBlocks(entityPageName);
+      const marker = `lss-managed:journal-materialized-${sourceBlockId ?? safeTag(obj.tag)}`;
+      if (!walkBlocks(existing).some((b) => String(b?.content ?? '').includes(marker))) {
+        await logseq.Editor.appendBlockInPage(entityPageName, `${body}\n\n<!-- ${marker} -->`).catch((error: unknown) => {
+          result.errors.push(`materialize journal entity ${entityPageName}: ${formatError(error)}`);
+        });
+      }
+    }
+    await cleanJournalEntitySourceBlock(result, block, sourceBlockId, entityPageName, obj);
+    await repairNamedPage(result, entityPageName, obj.name);
+    result.actions.push(`MATERIALIZED journal ${journalPageName} ${obj.name} block as page ${entityPageName}`);
+    count++;
+  }
+  if (count === 0) {
+    result.notes.push(`Journal page ${journalPageName} has no materializable LSS entity-tagged blocks.`);
+  } else {
+    result.notes.push(`Materialized ${count} LSS entity block(s) from journal ${journalPageName} to entity pages.`);
+  }
+  return count;
+}
 
 function normalizePropertyValueForCompare(value: unknown): string {
   if (value == null) return '';
@@ -1152,6 +1336,11 @@ async function repairSpecificPage(
     let blocks = await getBlocks(pageName);
     if (!blocks?.length && safePageName(pageName) !== pageName) {
       blocks = await getBlocks(safePageName(pageName));
+    }
+    if (pageRecordIsJournal(page, pageName)) {
+      const materialized = await materializeJournalEntityBlocks(result, pageName, blocks);
+      markRepairCooldown(pageName);
+      return materialized;
     }
     const { repaired } = await repairPageCore(result, pageName, pageBlockId, blocks, typeHint, label);
     markRepairCooldown(pageName);

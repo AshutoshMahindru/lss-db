@@ -177,6 +177,9 @@ async function insertFormByName(r: Result, objectName: string): Promise<void> {
 export async function newVenture(r: Result): Promise<void> {
   await createEntityByName(r, 'Venture');
 }
+export async function newFunction(r: Result): Promise<void> {
+  await createEntityByName(r, 'Function');
+}
 export async function newProject(r: Result): Promise<void> {
   await createEntityByName(r, 'Project');
 }

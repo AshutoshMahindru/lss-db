@@ -20,7 +20,7 @@ export const COMMAND_HELP: CommandHelpLine[] = [
   { id: '5', label: 'lss: 5setup-db-tags', description: 'Create DB tag contract pages.' },
   { id: '6', label: 'lss: 6setup-tag-properties', description: 'Create tag-property contract pages.' },
   { id: '7', label: 'lss: 7setup-relationships', description: 'Create relationship contract pages.' },
-  { id: '8', label: 'lss: 8setup-templates', description: 'Install native templates on LSS Native Templates and register them in /template picker.' },
+  { id: '8', label: 'lss: 8setup-templates', description: 'Install native templates on LSS Native Templates for entity-page materialization.' },
   { id: '9', label: 'lss: 9setup-dashboards', description: 'Create dashboard contract pages.' },
   { id: '10', label: 'lss: 10setup-word-extenders', description: 'Create Word Extender entries.' },
   { id: '11', label: 'lss: 11setup-db-native-config', description: 'Attempt DB-native tag/property configuration.' },
@@ -62,7 +62,9 @@ export const COMMAND_HELP: CommandHelpLine[] = [
   { id: '47', label: 'lss: 47create-command-list-page', description: 'Create/update LSS Command List with the active command surface.' },
   { id: '48', label: 'lss: 48create-layer-home-pages', description: 'Create/update one home page per LSS layer with backlinks to all pages in that layer.' },
   { id: '49', label: 'lss: 49add-layer-links-to-home', description: 'Add backlinks to all LSS layer home pages on [[Home]].' },
-  { id: '50', label: 'lss: 50repair-current-page', description: 'Recovery tool: promote tags/properties, fix dashboard queries. Most cases now handled automatically by creation + auto-repair.' },
+  { id: '50', label: 'lss: 50repair-current-page', description: 'Recovery tool: materialize journal entity blocks, promote page tags/properties, and fix dashboard queries.' },
+  { id: '51', label: 'lss: 51diagnose-current-page', description: 'Diagnose current-page DB tag, property, and query state.' },
+  { id: '52', label: 'lss: 52new-function', description: 'Create a placeholder Function page.' },
 ];
 
 export function commandListBody(): string {

@@ -258,7 +258,6 @@ export function nativeDbTemplateText(): string {
       parts.push(root);
       parts.push(`  template-name:: ${String(t.name).replace(/^Template\//, '')}`);
       parts.push(`  applies-to:: ${tag ? '#' + tag : '-'}`);
-      if (tag) parts.push(`  Apply template to tags:: #${tag}`);
       parts.push(`  node-kind:: ${t.nodeKind ?? '-'}`);
       parts.push(...rest);
     }

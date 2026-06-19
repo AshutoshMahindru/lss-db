@@ -6185,7 +6185,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Regime #Template\n  - Purpose\n    -\n  - Protocol\n    -\n  - Frequency\n    -\n  - Related conditions\n    -\n  - Tracking\n    -\n  - Review\n    -",
       "requiredSections": [
         "Purpose",
@@ -6204,7 +6204,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Diet #Template\n  - Purpose\n    -\n  - Protocol\n    -\n  - Allowed foods\n    -\n  - Avoid foods\n    -\n  - Tracking\n    -\n  - Review\n    -",
       "requiredSections": [
         "Purpose",
@@ -6223,7 +6223,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Exercise #Template\n  - Purpose\n    -\n  - Routine\n    -\n  - Frequency\n    -\n  - Progression\n    -\n  - Tracking\n    -\n  - Review\n    -",
       "requiredSections": [
         "Purpose",
@@ -6242,7 +6242,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Condition #Template\n  - Summary\n    -\n  - Diagnosis / evidence\n    -\n  - Symptoms\n    -\n  - Treatments\n    -\n  - Therapies\n    -\n  - Medicines\n    -\n  - Documents\n    -\n  - Review\n    -",
       "requiredSections": [
         "Summary",
@@ -6263,7 +6263,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Therapy #Template\n  - Purpose\n    -\n  - Provider\n    -\n  - Protocol\n    -\n  - Progress\n    -\n  - Review\n    -",
       "requiredSections": [
         "Purpose",
@@ -6281,7 +6281,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Treatment #Template\n  - Objective\n    -\n  - Protocol\n    -\n  - Timeline\n    -\n  - Outcome tracking\n    -\n  - Review\n    -",
       "requiredSections": [
         "Objective",
@@ -6299,7 +6299,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Medicine #Template\n  - Purpose\n    -\n  - Dosage\n    -\n  - Schedule\n    -\n  - Side effects\n    -\n  - Review\n    -",
       "requiredSections": [
         "Purpose",
@@ -6317,7 +6317,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Account #Template\n  - Purpose\n    -\n  - Institution\n    -\n  - Access notes\n    -\n  - Related assets\n    -\n  - Documents\n    -\n  - Review\n    -",
       "requiredSections": [
         "Purpose",
@@ -6336,7 +6336,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- FinancialAsset #Template\n  - Description\n    -\n  - Ownership\n    -\n  - Valuation notes\n    -\n  - Related accounts\n    -\n  - Documents\n    -\n  - Review\n    -",
       "requiredSections": [
         "Description",
@@ -6355,7 +6355,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Subject #Template\n  - Scope\n    -\n  - Courses\n    -\n  - Concepts\n    -\n  - Skills\n    -\n  - Resources\n    -\n  - Questions\n    -",
       "requiredSections": [
         "Scope",
@@ -6374,7 +6374,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Course #Template\n  - Objective\n    -\n  - Lessons\n    -\n  - Concepts\n    -\n  - Skills\n    -\n  - Assignments / practice\n    -\n  - Review\n    -",
       "requiredSections": [
         "Objective",
@@ -6393,7 +6393,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Lesson #Template\n  - Objective\n    -\n  - Notes\n    -\n  - Concepts\n    -\n  - Skills practiced\n    -\n  - Questions\n    -\n  - Summary\n    -",
       "requiredSections": [
         "Objective",
@@ -6412,7 +6412,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Concept #Template\n  - Definition\n    -\n  - Explanation\n    -\n  - Examples\n    -\n  - Related concepts\n    -\n  - Sources\n    -\n  - Questions\n    -",
       "requiredSections": [
         "Definition",
@@ -6431,7 +6431,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Skill #Template\n  - Definition\n    -\n  - Practice routine\n    -\n  - Current level\n    -\n  - Target level\n    -\n  - Evidence\n    -\n  - Related concepts\n    -",
       "requiredSections": [
         "Definition",
@@ -6450,7 +6450,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Ability #Template\n  - Definition\n    -\n  - Component skills\n    -\n  - Target standard\n    -\n  - Evidence\n    -\n  - Practice plan\n    -",
       "requiredSections": [
         "Definition",
@@ -6468,7 +6468,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Venture #Template\n  - Properties\n    -\n  - Functions\n    -\n  - Projects\n    -\n  - Workstreams\n    -\n  - Action-Items\n    -\n  - Teams\n    -\n  - Organisations\n    -\n  - People\n    -\n  - Interactions\n    -\n  - Questions\n    -\n  - Insights\n    -\n  - Ideas\n    -\n  - Decisions\n    -\n  - Notes\n    -\n  - Documents\n    -\n  - Files\n    -\n  - Review\n    -",
       "requiredSections": [
         "Properties",
@@ -6498,7 +6498,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Function #Template\n  - Purpose\n    -\n  - Responsibilities\n    -\n  - Related venture\n    -\n  - Projects\n    -\n  - Workstreams\n    -\n  - People\n    -\n  - Documents\n    -",
       "requiredSections": [
         "Purpose",
@@ -6518,7 +6518,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Project #Template\n  - Outcome\n    -\n  - Why this matters\n    -\n  - Scope\n    -\n  - Current status\n    -\n  - Next actions\n    -\n  - Decisions\n    -\n  - Interactions\n    -\n  - Documents\n    -\n  - Files\n    -\n  - Notes\n    -\n  - Review\n    -",
       "requiredSections": [
         "Outcome",
@@ -6542,7 +6542,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- WorkStream #Template\n  - Purpose\n    -\n  - Operating rhythm\n    -\n  - Current focus\n    -\n  - Related projects\n    -\n  - Updates\n    -\n  - Decisions\n    -\n  - Action items\n    -",
       "requiredSections": [
         "Purpose",
@@ -6562,7 +6562,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Team #Template\n  - Purpose\n    -\n  - Members\n    -\n  - Responsibilities\n    -\n  - Related work\n    -\n  - Meetings / interactions\n    -\n  - Review\n    -",
       "requiredSections": [
         "Purpose",
@@ -6581,7 +6581,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Pursuit #Template\n  - Purpose\n    -\n  - Motivation\n    -\n  - Current focus\n    -\n  - Experiments\n    -\n  - Notes\n    -\n  - Review\n    -",
       "requiredSections": [
         "Purpose",
@@ -6600,7 +6600,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Person #Template\n  - Profile\n    -\n  - Relationship context\n    -\n  - Organisations\n    -\n  - Ventures / projects\n    -\n  - Interactions\n    -\n  - Notes\n    -\n  - Follow-ups\n    -",
       "requiredSections": [
         "Profile",
@@ -6620,7 +6620,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Organisation #Template\n  - Profile\n    -\n  - People\n    -\n  - Ventures / projects\n    -\n  - Interactions\n    -\n  - Documents\n    -\n  - Notes\n    -",
       "requiredSections": [
         "Profile",
@@ -6639,7 +6639,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Document #Template\n  - Summary\n    -\n  - Purpose\n    -\n  - Related objects\n    -\n  - Key points\n    -\n  - Decisions / obligations\n    -\n  - Files / links\n    -",
       "requiredSections": [
         "Summary",
@@ -6658,7 +6658,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- File #Template\n  - Summary\n    -\n  - Location\n    -\n  - Related document\n    -\n  - Related objects\n    -\n  - Notes\n    -",
       "requiredSections": [
         "Summary",
@@ -6676,7 +6676,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Notebook #Template\n  - Purpose\n    -\n  - Scope\n    -\n  - Index query\n    -\n  - Notes\n    -\n  - Review\n    -",
       "requiredSections": [
         "Purpose",
@@ -6694,7 +6694,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Output #Template\n  - Purpose\n    -\n  - Audience\n    -\n  - Core message\n    -\n  - Structure\n    -\n  - Sources\n    -\n  - Review\n    -",
       "requiredSections": [
         "Purpose",
@@ -6713,7 +6713,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Report #Template\n  - Executive summary\n    -\n  - Context\n    -\n  - Findings\n    -\n  - Recommendations\n    -\n  - Risks / caveats\n    -\n  - Sources\n    -\n  - Next actions\n    -",
       "requiredSections": [
         "Executive summary",
@@ -6733,7 +6733,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Proposal #Template\n  - Problem / opportunity\n    -\n  - Proposed approach\n    -\n  - Scope\n    -\n  - Timeline\n    -\n  - Commercials / resourcing\n    -\n  - Risks\n    -\n  - Decision needed\n    -",
       "requiredSections": [
         "Problem / opportunity",
@@ -6753,7 +6753,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Presentation #Template\n  - Audience\n    -\n  - Desired decision / outcome\n    -\n  - Storyline\n    -\n  - Slide outline\n    -\n  - Data / sources\n    -\n  - Rehearsal notes\n    -",
       "requiredSections": [
         "Audience",
@@ -6772,7 +6772,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- SOP #Template\n  - Purpose\n    -\n  - Scope\n    -\n  - Owner\n    -\n  - Procedure\n    -\n  - Exceptions\n    -\n  - Review cadence\n    -",
       "requiredSections": [
         "Purpose",
@@ -6791,7 +6791,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Essay #Template\n  - Thesis\n    -\n  - Argument map\n    -\n  - Evidence\n    -\n  - Counterarguments\n    -\n  - Draft\n    -\n  - Revision notes\n    -",
       "requiredSections": [
         "Thesis",
@@ -6810,7 +6810,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- ResearchBrief #Template\n  - Research question\n    -\n  - Key findings\n    -\n  - Evidence table\n    -\n  - Open questions\n    -\n  - Implications\n    -\n  - Sources\n    -",
       "requiredSections": [
         "Research question",
@@ -6829,7 +6829,7 @@
       "nodeKind": "block-or-page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Interaction #Template\n  - Context\n    -\n  - Notes\n    -\n  - Decisions\n    -\n  - Action items\n    -\n  - Follow-up\n    -",
       "requiredSections": [
         "Context",
@@ -6847,7 +6847,7 @@
       "nodeKind": "block",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Question #Template\n  - Question\n    -\n  - Context\n    -\n  - Possible answers\n    -\n  - Related notes\n    -",
       "requiredSections": [
         "Question",
@@ -6864,7 +6864,7 @@
       "nodeKind": "block",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Insight #Template\n  - Insight\n    -\n  - Evidence\n    -\n  - Implications\n    -\n  - Related decisions\n    -",
       "requiredSections": [
         "Insight",
@@ -6881,7 +6881,7 @@
       "nodeKind": "block",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Idea #Template\n  - Idea\n    -\n  - Why it may matter\n    -\n  - Possible next step\n    -",
       "requiredSections": [
         "Idea",
@@ -6897,7 +6897,7 @@
       "nodeKind": "block-or-page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Decision #Template\n  - Decision\n    -\n  - Context\n    -\n  - Options considered\n    -\n  - Rationale\n    -\n  - Consequences\n    -\n  - Follow-up action items\n    -",
       "requiredSections": [
         "Decision",
@@ -6916,7 +6916,7 @@
       "nodeKind": "block",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- WorkStreamUpdate #Template\n  - Update\n    -\n  - Progress\n    -\n  - Blockers\n    -\n  - Next actions\n    -",
       "requiredSections": [
         "Update",
@@ -6933,7 +6933,7 @@
       "nodeKind": "block",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- ActionItem #Template\n  - Definition of done\n    -\n  - Context\n    -\n  - Dependencies\n    -",
       "requiredSections": [
         "Definition of done",
@@ -6949,7 +6949,7 @@
       "nodeKind": "block",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Note #Template\n  - Note\n    -\n  - Links\n    -",
       "requiredSections": [
         "Note",
@@ -6964,7 +6964,7 @@
       "nodeKind": "block-or-page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Review #Template\n  - Scope\n    -\n  - What changed\n    -\n  - What worked\n    -\n  - What did not work\n    -\n  - Decisions\n    -\n  - Next actions\n    -",
       "requiredSections": [
         "Scope",
@@ -6983,7 +6983,7 @@
       "nodeKind": "block-or-page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- DailyReview #Template\n  - Wins\n    -\n  - Problems\n    -\n  - Follow-ups\n    -\n  - Tomorrow\n    -",
       "requiredSections": [
         "Wins",
@@ -7000,7 +7000,7 @@
       "nodeKind": "block-or-page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- WeeklyReview #Template\n  - Areas reviewed\n    -\n  - Active ventures / projects\n    -\n  - Open loops\n    -\n  - Decisions made\n    -\n  - Next actions\n    -\n  - Review due items\n    -",
       "requiredSections": [
         "Areas reviewed",
@@ -7019,7 +7019,7 @@
       "nodeKind": "block-or-page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- MonthlyReview #Template\n  - Month summary\n    -\n  - Area health\n    -\n  - Outcomes shipped\n    -\n  - Risks / neglected areas\n    -\n  - Next month focus\n    -",
       "requiredSections": [
         "Month summary",
@@ -7037,7 +7037,7 @@
       "nodeKind": "block-or-page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- ImportantDate #Template\n  - What this date means\n    -\n  - Related people / organisations\n    -\n  - Reminder / follow-up\n    -",
       "requiredSections": [
         "What this date means",
@@ -7053,7 +7053,7 @@
       "nodeKind": "block-or-page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Commitment #Template\n  - Commitment\n    -\n  - Owner\n    -\n  - Context\n    -\n  - Due / follow-up\n    -\n  - Completion evidence\n    -",
       "requiredSections": [
         "Commitment",
@@ -7071,7 +7071,7 @@
       "nodeKind": "block-or-page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Event #Template\n  - Context\n    -\n  - Attendees\n    -\n  - Notes\n    -\n  - Decisions\n    -\n  - Follow-up\n    -",
       "requiredSections": [
         "Context",
@@ -7089,7 +7089,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Term #Template\n  - Definition / content\n    -\n  - Examples\n    -\n  - Avoid when\n    -",
       "requiredSections": [
         "Definition / content",
@@ -7105,7 +7105,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Phrase #Template\n  - Definition / content\n    -\n  - Examples\n    -\n  - Avoid when\n    -",
       "requiredSections": [
         "Definition / content",
@@ -7121,7 +7121,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- PromptFragment #Template\n  - Definition / content\n    -\n  - Examples\n    -\n  - Avoid when\n    -",
       "requiredSections": [
         "Definition / content",
@@ -7137,7 +7137,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Abbreviation #Template\n  - Definition / content\n    -\n  - Examples\n    -\n  - Avoid when\n    -",
       "requiredSections": [
         "Definition / content",
@@ -7153,7 +7153,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- NamingRule #Template\n  - Definition / content\n    -\n  - Examples\n    -\n  - Avoid when\n    -",
       "requiredSections": [
         "Definition / content",
@@ -7169,7 +7169,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- StyleRule #Template\n  - Definition / content\n    -\n  - Examples\n    -\n  - Avoid when\n    -",
       "requiredSections": [
         "Definition / content",
@@ -7185,7 +7185,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- Alias #Template\n  - Definition / content\n    -\n  - Examples\n    -\n  - Avoid when\n    -",
       "requiredSections": [
         "Definition / content",
@@ -7201,7 +7201,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- DomainVocabulary #Template\n  - Definition / content\n    -\n  - Examples\n    -\n  - Avoid when\n    -",
       "requiredSections": [
         "Definition / content",
@@ -7217,7 +7217,7 @@
       "nodeKind": "page",
       "status": "active",
       "schemaVersion": "1.0.0",
-      "applyTemplateToTagsRecommended": true,
+      "applyTemplateToTagsRecommended": false,
       "body": "- QuerySnippet #Template\n  - Definition / content\n    -\n  - Examples\n    -\n  - Avoid when\n    -",
       "requiredSections": [
         "Definition / content",
@@ -10429,7 +10429,7 @@
       "steps": [
         "Create Template/* pages.",
         "Create #Template blocks.",
-        "Set Apply template to tags where supported."
+        "Disable Apply template to tags for DB page entities; materialize templates onto entity pages."
       ],
       "rollback": "Delete created template blocks/pages if no user edits detected.",
       "reportFields": [

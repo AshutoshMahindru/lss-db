@@ -14,6 +14,7 @@ import {
   insertWordExtender,
   newCondition,
   newDocument,
+  newFunction,
   newOrganisation,
   newPerson,
   newProject,
@@ -127,6 +128,7 @@ export function registerCommands(): void {
   register('lss: 49add-layer-links-to-home', addLayerLinksToHome);
   register('lss: 50repair-current-page', repairCurrentPage);
   register('lss: 51diagnose-current-page', diagnoseCurrentPage);
+  registerAlias('LSS: New Function', 'lss: 52new-function', newFunction);
 
   // Additional spec aliases that map to existing handlers
   register('LSS: Initialize Schema (step-by-step)', maintInitializeSchema);

@@ -226,11 +226,16 @@ function ednStringSet(values: unknown[]): string {
   return `#{${[...set].map(ednQuotedString).join(' ')}}`;
 }
 
-function advancedTagClauses(tag: string, index: number): string[] {
+function tagIdentityClause(tagVar: string, tag: string): string {
   const title = ednQuotedString(tag);
+  const name = ednQuotedString(safeTag(tag).toLowerCase());
+  return `(or [${tagVar} :block/title ${title}] [${tagVar} :block/name ${name}] [${tagVar} :block/original-name ${title}])`;
+}
+
+function advancedTagClauses(tag: string, index: number): string[] {
   return [':block/tags', ':blocks/tags'].map((attr, attrIndex) => {
     const tagVar = `?tag${index}_${attrIndex}`;
-    return `(and [?b ${attr} ${tagVar}] [${tagVar} :block/title ${title}])`;
+    return `(and [?b ${attr} ${tagVar}] ${tagIdentityClause(tagVar, tag)})`;
   });
 }
 
@@ -1637,8 +1642,13 @@ async function resolvePageDbId(
   for (const candidate of titleCandidates) {
     try {
       const rows = await logseq.DB.datascriptQuery(
-        '[:find ?e :in $ ?title :where [?e :block/title ?title]]',
+        `[:find ?e :in $ ?title ?name
+ :where
+ (or [?e :block/title ?title]
+     [?e :block/original-name ?title]
+     [?e :block/name ?name])]`,
         candidate,
+        safePageName(candidate).toLowerCase(),
       );
       const found = Array.isArray(rows) ? rows[0]?.[0] : null;
       if (typeof found === 'number' && found > 0) return found;
@@ -1974,11 +1984,11 @@ function normalizeAdvancedQueryBlockContent(content: string): string {
     .replace(/#\+END_QUERY\s*$/i, '')
     .replace(/\s+/g, ' ')
     .toLowerCase();
-  const tags = [...text.matchAll(/\[?\?tag\s+:block\/title\s+"([^"]+)"\]/gi)].map((m) =>
+  const tags = [...text.matchAll(/\[?\?tag[^\s\]]*\s+:(?:block\/title|block\/original-name|block\/name)\s+"([^"]+)"\]/gi)].map((m) =>
     safeTag(m[1]).toLowerCase(),
   );
   const ventureAttrs = [
-    ...text.matchAll(/\[?\?b\s+(:[^\s\]]+)\s+\?current\]/gi),
+    ...text.matchAll(/\[?\?b\s+(:[^\s\]]+)\s+(?:\?current|\d+)\]/gi),
   ].map((m) => canonicalizePropertyTokenInQuery(m[1]));
   const parts: string[] = [];
   for (const tag of [...new Set(tags)]) {

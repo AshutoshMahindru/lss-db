@@ -69,7 +69,7 @@ function shouldSkipPage(pageName: string): boolean {
 function isUserPageEntity(page: Record<string, unknown> | null): boolean {
   if (!page) return false;
   const type = String(page.type ?? 'page').toLowerCase();
-  return type === 'page' || type === 'whiteboard';
+  return type === 'page' || type === 'journal' || type === 'whiteboard';
 }
 
 function txAttributeRelevant(attribute: string): boolean {

@@ -124,10 +124,10 @@ function normalizeAdvancedQueryBlockContent(content) {
     .replace(/#\+END_QUERY\s*$/i, '')
     .replace(/\s+/g, ' ')
     .toLowerCase();
-  const tags = [...text.matchAll(/\[?\?tag\s+:block\/title\s+"([^"]+)"\]/gi)].map((m) =>
+  const tags = [...text.matchAll(/\[?\?tag[^\s\]]*\s+:(?:block\/title|block\/original-name|block\/name)\s+"([^"]+)"\]/gi)].map((m) =>
     safeTag(m[1]).toLowerCase(),
   );
-  const ventureAttrs = [...text.matchAll(/\[?\?b\s+(:[^\s\]]+)\s+\?current\]/gi)].map((m) =>
+  const ventureAttrs = [...text.matchAll(/\[?\?b\s+(:[^\s\]]+)\s+(?:\?current|\d+)\]/gi)].map((m) =>
     String(m[1]).split('/').pop()?.replace(/^:/, '').toLowerCase() ?? '',
   );
   const parts = [];
@@ -611,6 +611,18 @@ const tests = [
     }
     if (!queryBlockNeedsRepair(advanced, simple)) {
       throw new Error('legacy BEGIN_QUERY wrapper should always need repair');
+    }
+  },
+  () => {
+    const advanced = `{:query [:find (pull ?b [*])
+ :in $
+ :where
+ (or (and [?b :block/tags ?tag0_0] (or [?tag0_0 :block/title "Function"] [?tag0_0 :block/name "function"]))
+     (and [?b :blocks/tags ?tag0_1] (or [?tag0_1 :block/title "Function"] [?tag0_1 :block/name "function"])))
+ [?b :plugin.property.logseq-lss-db-final-plugin/venture 11182]]}`;
+    const simple = '(and (tags function) (property venture <% current page %>))';
+    if (!queriesEquivalent(advanced, simple)) {
+      throw new Error('advanced generated tag vars + numeric venture id should normalize');
     }
   },
 ];
