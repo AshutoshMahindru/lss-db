@@ -1,0 +1,1 @@
+import fs from 'fs'; const r=JSON.parse(fs.readFileSync('src/registry/data.json','utf8')); if(!r.areas?.length||!r.entityTypes?.length||!r.formTypes?.length) throw new Error('registry incomplete'); console.log('registry ok', r.areas.length, r.entityTypes.length, r.formTypes.length);
