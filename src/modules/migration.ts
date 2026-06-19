@@ -1,18 +1,15 @@
-import { MODE, THROTTLE_MS } from '../config';
+import { MODE } from '../config';
 import {
   appendManagedBlock,
   currentPageName,
   ensurePage,
   getBlocks,
-  updateBlockContent,
   walkBlocks,
 } from '../core/editor';
 import { escapeRegExp, fixPhantomTagParenSyntax, safePageName, safeTag, tsKey } from '../core/names';
-import { formatError, sleep } from '../core/runner';
 import type { Result } from '../core/types';
 import { allObjects, registry } from '../registry';
 import { relationshipPropertyNames } from './queries';
-import { repairCurrentPage } from './repair';
 
 function aliasPairs(): Array<{ from: string; to: string }> {
   const pairs: Array<{ from: string; to: string }> = [];
@@ -67,38 +64,66 @@ export function convertRelationshipContent(content: string): { content: string; 
   return { content: out, changes };
 }
 
-async function updateCurrentPageBlocks(
+async function writeMigrationPlan(
+  r: Result,
+  title: string,
+  lines: string[],
+): Promise<void> {
+  await ensurePage(r, 'LSS Migrations');
+  await appendManagedBlock(
+    r,
+    'LSS Migrations',
+    `${MODE}-migration-plan-${title.replace(/[^a-zA-Z0-9]+/g, '-')}-${tsKey()}`,
+    [
+      `${title} dry run`,
+      `status:: review-required`,
+      `dry-run:: true`,
+      `generated-at:: ${new Date().toISOString()}`,
+      '',
+      ...lines,
+    ].join('\n'),
+  );
+}
+
+async function collectCurrentPageChanges(
   r: Result,
   transform: (content: string) => { content: string; changes: string[] },
   label: string,
-): Promise<void> {
+): Promise<{ page: string; changedBlocks: number; lines: string[] } | null> {
   const page = await currentPageName();
   if (!page) {
     r.errors.push('No current page detected. Open a page and rerun.');
-    return;
+    return null;
   }
   const blocks = walkBlocks(await getBlocks(page));
   let changedBlocks = 0;
+  const lines: string[] = [`Scope: [[${safePageName(page)}]]`, ''];
   for (const block of blocks) {
     const before = String(block?.content ?? '');
     const after = transform(before);
     if (after.content !== before) {
       changedBlocks += 1;
-      await updateBlockContent(r, block, after.content, `${label} on ${page}`);
-      for (const c of after.changes.slice(0, 8)) r.notes.push(c);
+      lines.push(`- Block ${changedBlocks}`);
+      for (const c of after.changes) lines.push(`  - ${c}`);
     }
   }
-  r.notes.push(`${label}: changed ${changedBlocks} block(s) on ${page}.`);
+  if (!changedBlocks) lines.push('- No candidate changes found.');
+  r.notes.push(`${label}: dry run found ${changedBlocks} candidate block(s) on ${page}.`);
+  return { page, changedBlocks, lines };
 }
 
 export async function normalizeProperties(r: Result): Promise<void> {
-  await updateCurrentPageBlocks(r, normalizePropertyContent, 'Normalize properties');
-  await repairCurrentPage(r);
+  const plan = await collectCurrentPageChanges(r, normalizePropertyContent, 'Normalize properties');
+  if (!plan) return;
+  await writeMigrationPlan(r, 'Normalize properties', plan.lines);
+  r.notes.push('Dry run only. Review the LSS Migrations report before applying any alias normalization manually.');
 }
 
 export async function convertTextRelationships(r: Result): Promise<void> {
-  await updateCurrentPageBlocks(r, convertRelationshipContent, 'Convert text relationships to node references');
-  await repairCurrentPage(r);
+  const plan = await collectCurrentPageChanges(r, convertRelationshipContent, 'Convert text relationships to node references');
+  if (!plan) return;
+  await writeMigrationPlan(r, 'Convert text relationships', plan.lines);
+  r.notes.push('Dry run only. Relationship conversion needs user review because plain text can be ambiguous.');
 }
 
 export async function migrateNamespacedObjects(r: Result): Promise<void> {
@@ -129,31 +154,21 @@ export async function migrateNamespacedObjects(r: Result): Promise<void> {
     r.errors.push(`Could not compute clean target page for ${page}.`);
     return;
   }
-  r.notes.push(`Computed clean page target: ${target} #${safeTag(match.tag)}.`);
-  try {
-    if (logseq.Editor.renamePage) {
-      await logseq.Editor.renamePage(page, target);
-      r.actions.push(`RENAME page: ${page} -> ${target}`);
-      await sleep(THROTTLE_MS);
-    } else {
-      r.notes.push('renamePage API not available; writing migration note only.');
-    }
-  } catch (e) {
-    r.errors.push(`rename-page ${page}->${target}: ${formatError(e)}`);
-  }
-  await ensurePage(r, target, {
-    'lss-object-type': match.name,
-    'lss-object-tag': `#${safeTag(match.tag)}`,
-  });
-  await appendManagedBlock(
+  const lines = [
+    `Scope: [[${safePageName(page)}]]`,
+    '',
+    `- Candidate rename: [[${safePageName(page)}]] -> [[${safePageName(target)}]]`,
+    `- Candidate tag: #${safeTag(match.tag)}`,
+    `- Object type: ${match.name}`,
+    '- Required preflight before apply:',
+    `  - Confirm [[${safePageName(target)}]] does not already exist with conflicting content.`,
+    '  - Confirm backlinks and aliases should be preserved.',
+    '  - Confirm the target tag is correct.',
+  ];
+  await writeMigrationPlan(
     r,
-    target,
-    `${MODE}-migration-note-${tsKey()}`,
-    [
-      'Migration note',
-      `from:: [[${safePageName(page)}]]`,
-      `target-tag:: #${safeTag(match.tag)}`,
-      'status:: review-required',
-    ].join('\n'),
+    'Migrate namespaced object',
+    lines,
   );
+  r.notes.push(`Dry run only. Computed clean page target: ${target} #${safeTag(match.tag)}.`);
 }

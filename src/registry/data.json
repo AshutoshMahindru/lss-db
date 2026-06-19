@@ -40,6 +40,7 @@
     "LSS Schema",
     "LSS Audit",
     "LSS Migrations",
+    "LSS Plugin",
     "LSS Exports"
   ],
   "areas": [
@@ -193,6 +194,26 @@
         "use-case",
         "trigger",
         "replacement-text"
+      ]
+    },
+    {
+      "tag": "RelationshipType",
+      "properties": [
+        "status",
+        "property-name",
+        "source-tags",
+        "target-tags",
+        "cardinality",
+        "bidirectional"
+      ]
+    },
+    {
+      "tag": "DashboardType",
+      "properties": [
+        "status",
+        "applies-to-tag",
+        "sections",
+        "query-patterns"
       ]
     },
     {

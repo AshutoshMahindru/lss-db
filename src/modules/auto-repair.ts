@@ -8,6 +8,7 @@ import { repairNamedPage } from './repair';
 
 const DEBOUNCE_MS = 1800;
 const COOLDOWN_MS = 5000;
+const AUTO_REPAIR_SETTING_KEY = 'autoRepairEnabled';
 const SKIP_PAGE_RE =
   /^(LSS |LSS$|Template\/|Dashboard\/|Entity-Page\/|Tag Properties\/|Property Reference\/|DB Tag\/|Tag Reference\/|Relationship\/|Area\/)/i;
 
@@ -18,6 +19,23 @@ const pendingTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const cooldownUntil = new Map<string, number>();
 const repairingPages = new Set<string>();
 let repairSessionDepth = 0;
+
+export function registerAutoRepairSettings(): void {
+  if (!logseq.useSettingsSchema) return;
+  logseq.useSettingsSchema([
+    {
+      key: AUTO_REPAIR_SETTING_KEY,
+      type: 'boolean',
+      default: false,
+      title: 'Enable LSS auto-repair',
+      description: 'Automatically repair tagged LSS pages after relevant graph changes. Leave off for manual/spec-safe operation.',
+    },
+  ]);
+}
+
+export function isAutoRepairEnabled(): boolean {
+  return logseq.settings?.[AUTO_REPAIR_SETTING_KEY] === true;
+}
 
 export function enterRepairSession(): void {
   repairSessionDepth++;
@@ -204,6 +222,7 @@ async function runAutoRepair(pageName: string): Promise<void> {
 }
 
 export function scheduleAutoRepair(pageName: string): void {
+  if (!isAutoRepairEnabled()) return;
   const name = String(pageName ?? '').trim();
   if (!name || shouldSkipPage(name)) return;
   if (Date.now() < (cooldownUntil.get(name) ?? 0)) return;
@@ -223,6 +242,7 @@ export async function handleGraphChange(
   blocks: Array<Record<string, unknown>>,
   txData: Array<[number, string, unknown, number, boolean]>,
 ): Promise<void> {
+  if (!isAutoRepairEnabled()) return;
   if (isRepairSessionActive()) return;
   if (!changeEventRelevant(blocks, txData)) return;
   const pages = await collectPageNames(blocks);
@@ -230,6 +250,10 @@ export async function handleGraphChange(
 }
 
 export function registerAutoRepairHooks(): void {
+  if (!isAutoRepairEnabled()) {
+    console.info('[LSS] auto-repair disabled by plugin setting; manual repair commands remain available.');
+    return;
+  }
   if (!logseq.DB?.onChanged) {
     console.warn('[LSS] logseq.DB.onChanged unavailable; auto-repair hooks not registered.');
     return;

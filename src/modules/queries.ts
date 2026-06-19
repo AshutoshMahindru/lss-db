@@ -207,38 +207,78 @@ function ednQuotedString(value: string): string {
   return JSON.stringify(String(value ?? ''));
 }
 
+function todayJournalDay(): number {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return Number(`${y}${m}${day}`);
+}
+
+function ednStringSet(values: unknown[]): string {
+  const set = new Set<string>();
+  for (const value of values ?? []) {
+    const raw = String(value ?? '').trim();
+    if (!raw) continue;
+    set.add(raw);
+    set.add(raw.toLowerCase());
+  }
+  return `#{${[...set].map(ednQuotedString).join(' ')}}`;
+}
+
+function advancedTagClauses(tag: string, index: number): string[] {
+  const title = ednQuotedString(tag);
+  return [':block/tags', ':blocks/tags'].map((attr, attrIndex) => {
+    const tagVar = `?tag${index}_${attrIndex}`;
+    return `(and [?b ${attr} ${tagVar}] [${tagVar} :block/title ${title}])`;
+  });
+}
+
+async function currentPagePropertyClause(prop: string, currentPageId?: number): Promise<string> {
+  const attr = identToDatascriptAttr(await resolvePropertyQueryName(prop));
+  if (currentPageId != null) {
+    return `[?b ${attr} ${currentPageId}]`;
+  }
+  return `(or [?b ${attr} ?current] (and [?b ${attr} ?ref] (or [(= ?current ?ref)] [?ref :db/id ?current] [?ref :block/title ?current] [?ref :block/name ?current] [?ref :block/uuid ?current])))`;
+}
+
+function notInPropertyClauses(attr: string, values: unknown[]): string[] {
+  const blocked = ednStringSet(values);
+  if (blocked === '#{}') return [];
+  return [
+    `(not-join [?b] [?b ${attr} ?blocked] [(contains? ${blocked} ?blocked)])`,
+    `(not-join [?b] [?b ${attr} ?blocked] [?blocked :block/title ?blockedTitle] [(contains? ${blocked} ?blockedTitle)])`,
+  ];
+}
+
 async function advancedQueryWhereLinesForView(view: ViewDefinition, currentPageId?: number): Promise<string[]> {
   const lines: string[] = [];
   const tags = normTagList(view.sourceTags).map(safeTag).filter(Boolean);
 
-  // Use exact pattern from working datascript probe: tag title match + venture ref.
-  // Avoid broad ORs and lss-object-type to match what succeeds in probe.
   if (tags.length > 0) {
-    for (const tag of tags) {
-      const title = ednQuotedString(tag);
-      lines.push(`[?b :block/tags ?t]`);
-      lines.push(`[?t :block/title ${title}]`);
-    }
+    const clauses = tags.flatMap((tag, index) => advancedTagClauses(tag, index));
+    lines.push(clauses.length > 1 ? `(or ${clauses.join(' ')})` : clauses[0]);
   }
 
   for (const filter of view.filters ?? []) {
     const props = filterProps(filter);
     const op = String(filter.operator ?? '');
     if (op === 'includesCurrentPage' && props.length) {
-      for (const prop of props) {
-        const attr = identToDatascriptAttr(await resolvePropertyQueryName(prop));
-        if (currentPageId != null) {
-          const id = currentPageId;
-          lines.push(`[?b ${attr} ${id}]`);
-        } else {
-          lines.push(`(or [?b ${attr} ?current] (and [?b ${attr} ?ref] (or [(= ?current ?ref)] [?ref :db/id ?current] [?ref :block/name ?current] [?ref :block/uuid ?current] [?ref :block/original-name ?current])))`);
-        }
-      }
+      const clauses = await Promise.all(props.map((prop) => currentPagePropertyClause(prop, currentPageId)));
+      lines.push(clauses.length > 1 ? `(or ${clauses.join(' ')})` : clauses[0]);
       continue;
     }
     if (op === 'onOrBeforeToday' && props.length) {
       const attr = identToDatascriptAttr(await resolvePropertyQueryName(props[0]));
       lines.push(`[?b ${attr} ?today]`);
+      lines.push(`[(<= ?today ${todayJournalDay()})]`);
+      continue;
+    }
+    if (op === 'notIn' && props.length && Array.isArray(filter.value) && filter.value.length) {
+      for (const prop of props) {
+        const attr = identToDatascriptAttr(await resolvePropertyQueryName(prop));
+        lines.push(...notInPropertyClauses(attr, filter.value));
+      }
     }
   }
 
@@ -259,16 +299,13 @@ async function advancedQueryWhereLinesForView(view: ViewDefinition, currentPageI
  */
 export async function advancedDashboardQueryEdnForViewAsync(view: ViewDefinition, currentPageId?: number): Promise<string> {
   const whereLines = await advancedQueryWhereLinesForView(view, currentPageId);
-  const title = String(view.section ?? view.title ?? 'LSS Query').trim();
   const hasCurrent = whereLines.some(l => l.includes('?current'));
   const inPart = hasCurrent ? ' $ ?current' : ' $';
   const inputsPart = hasCurrent ? '\n:inputs [:current-page]' : '';
-  return `{:title ${ednQuotedString(title)}
-:query [:find (pull ?b [:block/uuid :block/title :block/name :block/original-name])
+  return `{:query [:find (pull ?b [*])
  :in${inPart}
  :where
- ${whereLines.join('\n ')}]${inputsPart}
-:collapsed? false}`;
+ ${whereLines.join('\n ')}]${inputsPart}}`;
 }
 
 /** Raw EDN for /Advanced Query (no #+BEGIN_QUERY wrapper — deprecated in DB v2). */
@@ -1565,6 +1602,53 @@ export function queryBodyFromBlockContent(content: string): string {
   return queryBodyFromContent(text);
 }
 
+async function resolvePageDbId(
+  pageName?: string,
+  page?: { originalName?: string; name?: string; title?: string; id?: number | string; uuid?: string } | null,
+): Promise<number | undefined> {
+  if (typeof page?.id === 'number' && Number.isFinite(page.id) && page.id > 0) return page.id;
+
+  const identity = entityIdentity(page);
+  if (typeof identity === 'number' && Number.isFinite(identity) && identity > 0) return identity;
+  if (!logseq.DB?.datascriptQuery) return undefined;
+
+  const uuid =
+    typeof page?.uuid === 'string'
+      ? page.uuid
+      : typeof identity === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(identity)
+        ? identity
+        : null;
+  if (uuid) {
+    try {
+      const rows = await logseq.DB.datascriptQuery(
+        '[:find ?e :in $ ?uuid :where [?e :block/uuid ?uuid]]',
+        `#uuid "${uuid}"`,
+      );
+      const found = Array.isArray(rows) ? rows[0]?.[0] : null;
+      if (typeof found === 'number' && found > 0) return found;
+    } catch {
+      /* fall through to title lookup */
+    }
+  }
+
+  const title = String(page?.originalName ?? page?.title ?? page?.name ?? pageName ?? '').trim();
+  if (!title) return undefined;
+  const titleCandidates = [...new Set([title, safePageName(title)])].filter(Boolean);
+  for (const candidate of titleCandidates) {
+    try {
+      const rows = await logseq.DB.datascriptQuery(
+        '[:find ?e :in $ ?title :where [?e :block/title ?title]]',
+        candidate,
+      );
+      const found = Array.isArray(rows) ? rows[0]?.[0] : null;
+      if (typeof found === 'number' && found > 0) return found;
+    } catch {
+      /* try next candidate */
+    }
+  }
+  return undefined;
+}
+
 /**
  * Full dashboard query block content.
  * DB graphs: s-expression only; repair adds #Query block tag via addBlockTag.
@@ -1576,7 +1660,7 @@ export async function dashboardQueryBlockForViewAsync(
   _page?: { originalName?: string; name?: string; id?: number } | null,
 ): Promise<string> {
   if (await isDbGraph()) {
-    const currentId = (typeof _page?.id === 'number' ? _page.id : undefined);
+    const currentId = await resolvePageDbId(_pageName, _page);
     const advanced = await advancedDashboardQueryEdnForViewAsync(view, currentId);
     return advanced ? advancedQueryBlockContent(advanced) : '';
   }

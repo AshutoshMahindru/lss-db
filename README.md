@@ -16,8 +16,8 @@ src/
     queries.ts           dashboard/advanced query builders (tag-based class match + hardcoded id for current page binding on DB)
     repair.ts            promote tags + properties (from RegistryObject only), dashboard query repair
     audit.ts             structured page audit (ERROR/WARNING/INFO) using RegistryObject required props
-    migration.ts         normalize, convert relationships, migrate namespaced
-    dashboard.ts         insert dashboards with working simple-query blocks
+    migration.ts         dry-run normalize, relationship conversion, and namespaced migration plans
+    dashboard.ts         insert dashboards with DB advanced-query blocks
     export.ts            snapshot, export, weekly review
     navigation.ts        commands 45-49, help, command list, layer homes
   commands/register.ts   numbered lss: commands + LSS: spec aliases
@@ -34,10 +34,16 @@ src/
 
 ## Key v2.0 fixes
 
-1. Queries use `(property lss-object-type "Venture")` instead of `(tags [[Function]])` to avoid the Function) parser bug.
-2. Dashboard insert commands (35-37) insert a section skeleton and immediately run repair to install working queries (native advanced query blocks on DB graphs using `(tags ...)` + venture node ref; simple `#Query` on file graphs).
-3. `lss: 38normalize-properties` and `lss: 39convert-text-relationships` run repair on the current page afterward.
-4. `lss: 50repair-current-page` is now mainly a recovery tool. Property schema is ensured at creation time from the RegistryObject (tag). Dashboard queries are installed automatically by insert commands + auto-repair. Use 50 for stubborn cases or after manual edits.
+1. DB dashboard queries use native advanced-query blocks, DB tag clauses, current-page DB ids where available, and current Logseq DB property filters.
+2. Multi-tag and multi-property dashboard views use `or` semantics, so sections like Outputs and People do not require every possible tag/property at once.
+3. `lss: 38normalize-properties`, `lss: 39convert-text-relationships`, and `lss: 40migrate-namespaced-objects` now write dry-run plans to `LSS Migrations` instead of mutating content immediately.
+4. `lss: 50repair-current-page` is now mainly a recovery tool. Property schema is ensured at creation time from the RegistryObject (tag). Dashboard queries are installed by insert commands and can be repaired manually with 50.
+
+## Runtime safety
+
+- Auto-repair is disabled by default. Enable the plugin setting **Enable LSS auto-repair** only if you want background sync after graph changes.
+- Migration-style commands are dry-run by default and produce review-required reports.
+- The graph remains the source of truth; the plugin assists with setup, repair, audit, migration planning, and export.
 
 ## Property schema source of truth (tag / RegistryObject)
 
@@ -105,10 +111,10 @@ For template setup, open `LSS Native Templates`, create an empty block, click in
 
 ## Build
 
-If a previous install failed with internal registry URLs, delete `package-lock.json` first (the v2.0.0 rewrite ships without a lockfile pinned to a private mirror).
+The repo includes a public-registry `package-lock.json` and `.npmrc`.
 
 ```bash
-npm install
+npm ci
 npm run build
 npm run package   # optional release zip
 ```

@@ -37,7 +37,7 @@ import {
   createSimplePageTreePage,
 } from '../modules/navigation';
 import { diagnoseCurrentPage } from '../modules/diagnose';
-import { registerAutoRepairHooks } from '../modules/auto-repair';
+import { isAutoRepairEnabled, registerAutoRepairHooks, registerAutoRepairSettings } from '../modules/auto-repair';
 import { repairCurrentPage } from '../modules/repair';
 import {
   maintInitializeSchema,
@@ -132,10 +132,11 @@ export function registerCommands(): void {
   register('LSS: Initialize Schema (step-by-step)', maintInitializeSchema);
   register('LSS: Verify Schema (report only)', maintVerifySchema);
 
+  registerAutoRepairSettings();
   registerAutoRepairHooks();
 
   logseq.UI.showMsg(
-    `${TITLE} plugin ${VERSION} loaded. Auto-sync enabled for tagged/template pages.`,
+    `${TITLE} plugin ${VERSION} loaded. Auto-sync ${isAutoRepairEnabled() ? 'enabled' : 'disabled'}; manual repair is available.`,
     'success',
   );
 }
