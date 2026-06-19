@@ -281,6 +281,14 @@ function isPropertySchemaConflict(message: string): boolean {
   return /can't be changed|existing data|cannot be changed/i.test(message);
 }
 
+export function isPluginPropertyOwnershipError(message: string): boolean {
+  return /plugins can only upsert (?:its own|their own|own) properties/i.test(message);
+}
+
+function skippedNativeProperty(name: string, note: string): EnsureNativePropertyResult {
+  return { name, created: false, skipped: true, note };
+}
+
 export async function ensureNativeProperty(spec: NativePropertySpec): Promise<EnsureNativePropertyResult | null> {
   const name = spec.name ?? spec.property ?? spec.key;
   if (!name || !logseq.Editor.upsertProperty) return null;
@@ -295,20 +303,17 @@ export async function ensureNativeProperty(spec: NativePropertySpec): Promise<En
       try {
         await ensureChoicePropertyValues(name, spec.choices);
       } catch (error) {
-        return {
-          name,
-          created: false,
-          skipped: true,
-          note: `choice values not updated: ${formatError(error)}`,
-        };
+        const message = formatError(error);
+        if (isPluginPropertyOwnershipError(message)) {
+          return skippedNativeProperty(
+            name,
+            'property is owned by Logseq or another plugin; choice values left unchanged',
+          );
+        }
+        return skippedNativeProperty(name, `choice values not updated: ${message}`);
       }
     }
-    return {
-      name,
-      created: false,
-      skipped: true,
-      note: 'property already exists in graph; schema left unchanged',
-    };
+    return skippedNativeProperty(name, 'property already exists in graph; schema left unchanged');
   }
 
   try {
@@ -320,7 +325,13 @@ export async function ensureNativeProperty(spec: NativePropertySpec): Promise<En
   } catch (error) {
     const message = formatError(error);
     if (isPropertySchemaConflict(message)) {
-      return { name, created: false, skipped: true, note: message };
+      return skippedNativeProperty(name, message);
+    }
+    if (isPluginPropertyOwnershipError(message)) {
+      return skippedNativeProperty(
+        name,
+        'property is owned by Logseq or another plugin; schema left unchanged',
+      );
     }
     throw error;
   }

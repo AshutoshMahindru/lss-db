@@ -1,5 +1,9 @@
 import { MODE } from '../config';
-import { ensureNativeProperty, entityIdentity } from '../core/db-properties';
+import {
+  ensureNativeProperty,
+  entityIdentity,
+  isPluginPropertyOwnershipError,
+} from '../core/db-properties';
 import {
   appendManagedBlock,
   ensurePage,
@@ -198,7 +202,10 @@ export async function step10db(r: Result): Promise<void> {
       await sleep(20);
     } catch (e) {
       const message = formatError(e);
-      if (/can't be changed|existing data|cannot be changed/i.test(message)) {
+      if (
+        /can't be changed|existing data|cannot be changed/i.test(message) ||
+        isPluginPropertyOwnershipError(message)
+      ) {
         r.notes.push(`SKIP native property ${name}: ${message}`);
         propertyCache.add(name);
       } else {
