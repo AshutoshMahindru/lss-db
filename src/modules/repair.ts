@@ -1273,6 +1273,7 @@ export async function repairDashboardQueries(
     }
     const queryContent = await dashboardQueryBlockForViewAsync(view, pageName, pageEntity);
     if (!queryContent) continue;
+    const queryIsAdvanced = isAdvancedQueryBlockContent(queryContent);
     const queryTitle = (view && view.sourceTags && view.sourceTags.length ? view.sourceTags[0] : section) || section;
     const existingQueries = await findAllQueryBlocksInSectionAsync(sectionBlock);
     if (existingQueries.length) {
@@ -1296,8 +1297,29 @@ export async function repairDashboardQueries(
       const before = await readDashboardQueryBlockContent(canonical);
       const needsContent = queryBlockNeedsRepair(before, queryContent);
       const struct = await inspectDbQueryBlockStructure(canonical);
-      const needsStructure = dbAdvancedQueryBlockNeedsStructureRepair(struct);
+      const needsStructure = queryIsAdvanced ? dbAdvancedQueryBlockNeedsStructureRepair(struct) : false;
       if (needsContent || needsStructure) {
+        if (!queryIsAdvanced) {
+          for (const existing of existingQueries) {
+            if (await removeDashboardQueryBlock(result, existing, `${objectType} / ${section}`)) {
+              changed++;
+            }
+          }
+          if (!logseq.Editor.insertBlock) {
+            result.errors.push(`dashboard-query: insertBlock unavailable for ${section}`);
+          } else {
+            const fresh = await logseq.Editor.insertBlock(
+              blockId(sectionBlock),
+              queryContent,
+              { sibling: false, before: false, end: true },
+            );
+            if (fresh) {
+              result.actions.push(`REBUILT simple DB query for ${objectType} / ${section}`);
+              changed++;
+            }
+          }
+          continue;
+        }
         const hasTagButNoChild = struct.hasQueryClassTag && !struct.hasQueryProperty;
         const hasEdnButNoDisplay = struct.hasQueryClassTag && struct.hasQueryProperty && struct.childTitleHasEdn && !struct.childDisplayTypeIsCode;
         if ((hasTagButNoChild || hasEdnButNoDisplay) && (await forceCreateQueryChild(result, canonical, queryContent))) {
@@ -1362,7 +1384,7 @@ export async function repairDashboardQueries(
     } else if (logseq.Editor.insertBlock) {
       try {
         const isDb = await isDbGraph();
-        const shellContent = isDb ? queryTitle : queryContent;
+        const shellContent = isDb && queryIsAdvanced ? queryTitle : queryContent;
         const inserted = await logseq.Editor.insertBlock(
           blockId(sectionBlock),
           shellContent,
@@ -1374,7 +1396,7 @@ export async function repairDashboardQueries(
         );
         result.actions.push(`INSERT dashboard query shell: ${objectType} / ${section}`);
         changed++;
-        if (isDb && inserted && queryContent) {
+        if (isDb && inserted && queryIsAdvanced) {
           let ok = await configureDbAdvancedQueryBlock(result, inserted, queryContent);
           if (!ok) {
             await sleep(150);
@@ -1395,7 +1417,7 @@ export async function repairDashboardQueries(
               try { scheduleAutoRepair(pageName); } catch {}
             }
           }
-        } else if (inserted && !isDb) {
+        } else if (inserted && !isDb && queryIsAdvanced) {
           await updateBlockContent(result, inserted, queryTitle, `Set query title to ${queryTitle}`);
         }
       } catch (error) {

@@ -1675,7 +1675,8 @@ async function resolvePageDbId(
 
 /**
  * Full dashboard query block content.
- * DB graphs: s-expression only; repair adds #Query block tag via addBlockTag.
+ * DB graphs: prefer simple #Query with concrete page id because Logseq's stored
+ * advanced-query runner can fail while the DSL path returns the expected rows.
  * File graphs: inline `#Query` prefix in content.
  */
 export async function dashboardQueryBlockForViewAsync(
@@ -1685,6 +1686,10 @@ export async function dashboardQueryBlockForViewAsync(
 ): Promise<string> {
   if (await isDbGraph()) {
     const currentId = await resolvePageDbId(_pageName, _page);
+    if (currentId != null) {
+      const body = await dbDashboardQueryForViewAsync(view, String(currentId));
+      return queryBlockContent(body);
+    }
     const currentName = String(_page?.originalName ?? _page?.title ?? _page?.name ?? _pageName ?? '').trim();
     const advanced = await advancedDashboardQueryEdnForViewAsync(view, currentId, currentName);
     return advanced ? advancedQueryBlockContent(advanced) : '';
