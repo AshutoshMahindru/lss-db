@@ -239,10 +239,34 @@ function advancedTagClauses(tag: string, index: number): string[] {
   });
 }
 
-async function currentPagePropertyClause(prop: string, currentPageId?: number): Promise<string> {
+function pageIdentityAlternates(pageName?: string): string[] {
+  const raw = String(pageName ?? '').trim();
+  if (!raw) return [];
+  return [...new Set([raw, safePageName(raw), raw.toLowerCase(), safePageName(raw).toLowerCase()])].filter(Boolean);
+}
+
+async function currentPagePropertyClause(
+  prop: string,
+  currentPageId?: number,
+  currentPageName?: string,
+): Promise<string> {
   const attr = identToDatascriptAttr(await resolvePropertyQueryName(prop));
   if (currentPageId != null) {
-    return `[?b ${attr} ${currentPageId}]`;
+    const refClauses = [`[?ref :db/id ${currentPageId}]`];
+    for (const name of pageIdentityAlternates(currentPageName)) {
+      const quoted = ednQuotedString(name);
+      refClauses.push(
+        `[?ref :block/title ${quoted}]`,
+        `[?ref :block/original-name ${quoted}]`,
+        `[?ref :block/name ${quoted}]`,
+      );
+    }
+    const valueClauses = [`[?b ${attr} ${currentPageId}]`];
+    for (const name of pageIdentityAlternates(currentPageName)) {
+      valueClauses.push(`[?b ${attr} ${ednQuotedString(name)}]`);
+    }
+    valueClauses.push(`(and [?b ${attr} ?ref] (or ${refClauses.join(' ')}))`);
+    return `(or ${valueClauses.join(' ')})`;
   }
   return `(or [?b ${attr} ?current] (and [?b ${attr} ?ref] (or [(= ?current ?ref)] [?ref :db/id ?current] [?ref :block/title ?current] [?ref :block/name ?current] [?ref :block/uuid ?current])))`;
 }
@@ -256,7 +280,11 @@ function notInPropertyClauses(attr: string, values: unknown[]): string[] {
   ];
 }
 
-async function advancedQueryWhereLinesForView(view: ViewDefinition, currentPageId?: number): Promise<string[]> {
+async function advancedQueryWhereLinesForView(
+  view: ViewDefinition,
+  currentPageId?: number,
+  currentPageName?: string,
+): Promise<string[]> {
   const lines: string[] = [];
   const tags = normTagList(view.sourceTags).map(safeTag).filter(Boolean);
 
@@ -269,7 +297,9 @@ async function advancedQueryWhereLinesForView(view: ViewDefinition, currentPageI
     const props = filterProps(filter);
     const op = String(filter.operator ?? '');
     if (op === 'includesCurrentPage' && props.length) {
-      const clauses = await Promise.all(props.map((prop) => currentPagePropertyClause(prop, currentPageId)));
+      const clauses = await Promise.all(
+        props.map((prop) => currentPagePropertyClause(prop, currentPageId, currentPageName)),
+      );
       lines.push(clauses.length > 1 ? `(or ${clauses.join(' ')})` : clauses[0]);
       continue;
     }
@@ -302,8 +332,12 @@ async function advancedQueryWhereLinesForView(view: ViewDefinition, currentPageI
  *
  * Use flat clause style to match proven probe patterns.
  */
-export async function advancedDashboardQueryEdnForViewAsync(view: ViewDefinition, currentPageId?: number): Promise<string> {
-  const whereLines = await advancedQueryWhereLinesForView(view, currentPageId);
+export async function advancedDashboardQueryEdnForViewAsync(
+  view: ViewDefinition,
+  currentPageId?: number,
+  currentPageName?: string,
+): Promise<string> {
+  const whereLines = await advancedQueryWhereLinesForView(view, currentPageId, currentPageName);
   const hasCurrent = whereLines.some(l => l.includes('?current'));
   const inPart = hasCurrent ? ' $ ?current' : ' $';
   const inputsPart = hasCurrent ? '\n:inputs [:current-page]' : '';
@@ -1667,11 +1701,12 @@ async function resolvePageDbId(
 export async function dashboardQueryBlockForViewAsync(
   view: ViewDefinition,
   _pageName?: string,
-  _page?: { originalName?: string; name?: string; id?: number } | null,
+  _page?: { originalName?: string; name?: string; title?: string; id?: number } | null,
 ): Promise<string> {
   if (await isDbGraph()) {
     const currentId = await resolvePageDbId(_pageName, _page);
-    const advanced = await advancedDashboardQueryEdnForViewAsync(view, currentId);
+    const currentName = String(_page?.originalName ?? _page?.title ?? _page?.name ?? _pageName ?? '').trim();
+    const advanced = await advancedDashboardQueryEdnForViewAsync(view, currentId, currentName);
     return advanced ? advancedQueryBlockContent(advanced) : '';
   }
   const body = await simpleQueryForViewAsync(view, '<% current page %>');

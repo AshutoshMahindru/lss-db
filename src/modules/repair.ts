@@ -695,6 +695,29 @@ async function ensureObjectTypeFromTags(
   return fromTags;
 }
 
+async function inferObjectTypeForRepairPage(
+  pageName: string,
+  pageBlockId: string,
+  blocks: any[],
+  tags: Set<string>,
+  props: Map<string, string>,
+  result: Result,
+): Promise<string | null> {
+  const fromTags = await ensureObjectTypeFromTags(pageBlockId, tags, props, result);
+  if (fromTags) return fromTags;
+
+  const fromSections = inferCurrentPageObjectType(pageName, blocks);
+  if (!fromSections) return null;
+  const obj = objectByName(fromSections);
+  const tag = obj ? safeTag(obj.tag) : safeTag(fromSections);
+  if (tag) tags.add(tag);
+  if (!props.get('lss-object-type')) props.set('lss-object-type', fromSections);
+  result.notes.push(
+    `Inferred lss-object-type:: ${fromSections} from page sections; bootstrapping page tag #${tag || fromSections}.`,
+  );
+  return fromSections;
+}
+
 async function repairPageCore(
   result: Result,
   pageName: string,
@@ -705,7 +728,7 @@ async function repairPageCore(
 ): Promise<{ objectType: string | null; repaired: number; linked: number; resolvedTags: Set<string>; props: Map<string, string> }> {
   const page = await getPage(pageName);
   const { props, tags } = await gatherPageRepairState(result, pageName, pageBlockId, page, blocks);
-  const inferredType = await ensureObjectTypeFromTags(pageBlockId, tags, props, result);
+  const inferredType = await inferObjectTypeForRepairPage(pageName, pageBlockId, blocks, tags, props, result);
 
   // === TAG IS SOLE SCHEMA SOURCE (post "bigger pass" cleanup) ===
   // After inferring type from the (primary) tag, ensure every property declared
