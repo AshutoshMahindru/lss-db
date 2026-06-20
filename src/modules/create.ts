@@ -11,10 +11,23 @@ import {
 } from '../core/editor';
 import { scheduleAutoRepair } from './auto-repair';
 import { repairNamedPage } from './repair';
-import { isDateProperty, pageHasClassTag, resolveUpsertPropertyValue, toJournalDay } from '../core/db-properties';
+import {
+  canonicalPropertyKey,
+  isDateProperty,
+  pageHasClassTag,
+  resolveUpsertPropertyValue,
+  toJournalDay,
+} from '../core/db-properties';
 import { sleep } from '../core/runner';
-import { normalizeAreaRef, objectByName } from '../registry';
-import { safeTag, todayRef, tsKey } from '../core/names';
+import {
+  allObjects,
+  dashboardPageForObjectType,
+  normalizeAreaRef,
+  objectByName,
+  propertySpec,
+  registry,
+} from '../registry';
+import { safePageName, safeTag, todayRef, tsKey } from '../core/names';
 import type { Result } from '../core/types';
 import type { RegistryObject } from '../registry/types';
 
@@ -64,34 +77,141 @@ function propLine(prop: string, o: RegistryObject): string {
   return `${p}:: `;
 }
 
-function pageHasVentureDashboardSections(blocks: any[]): boolean {
+function sectionNames(blocks: any[]): Set<string> {
   const sections = new Set<string>();
   for (const block of walkBlocks(blocks)) {
     const text = String(block?.content ?? '').trim();
-    if (/^(Functions|Projects|Workstreams)\b/i.test(text)) {
-      sections.add(text.split(/\s+/)[0].toLowerCase());
-    }
+    if (text && !text.includes('::')) sections.add(text.split(/\s+/)[0].toLowerCase());
   }
-  return sections.has('functions') && sections.has('projects') && sections.has('workstreams');
+  return sections;
 }
 
-async function currentVentureRefForCreate(): Promise<string | null> {
+function inferObjectTypeFromSections(blocks: any[]): string | null {
+  const sections = sectionNames(blocks);
+  if (sections.has('functions') && sections.has('projects') && sections.has('workstreams')) return 'Venture';
+  if (sections.has('outcome') && sections.has('scope')) return 'Project';
+  if (sections.has('responsibilities') && sections.has('related')) return 'Function';
+  if (sections.has('interactions') && sections.has('commitments')) return 'Person';
+  if (sections.has('treatments') && sections.has('symptoms')) return 'Condition';
+  if (sections.has('courses') && sections.has('lessons') && sections.has('concepts')) return 'Subject';
+  return null;
+}
+
+async function propertyValueToCreateRef(value: unknown): Promise<string> {
+  if (value == null) return '';
+  if (Array.isArray(value)) {
+    const values = await Promise.all(value.map((item) => propertyValueToCreateRef(item)));
+    return values.filter(Boolean).join(', ');
+  }
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const name = String(record.originalName ?? record.name ?? record.title ?? '').trim();
+    if (name) return `[[${safePageName(name)}]]`;
+    const id = record.id ?? record.uuid;
+    return id != null ? String(id) : '';
+  }
+  const raw = String(value).trim();
+  if (!raw) return '';
+  if (raw.startsWith('[[')) return raw;
+  if (/^\d+$/.test(raw) && Number(raw) < 1e9) return raw;
+  return raw;
+}
+
+async function readCurrentContextProps(pageName: string, pageBlockId: string | null): Promise<Map<string, string>> {
+  const props = new Map<string, string>();
+  const sources: Array<Record<string, unknown> | null | undefined> = [];
+  const page = await getPage(pageName);
+  sources.push(page?.properties as Record<string, unknown> | undefined);
+  if (logseq.Editor.getPageProperties) {
+    sources.push(await logseq.Editor.getPageProperties(pageName).catch(() => null));
+  }
+  if (pageBlockId && logseq.Editor.getBlockProperties) {
+    sources.push(await logseq.Editor.getBlockProperties(pageBlockId).catch(() => null));
+  }
+  for (const source of sources) {
+    if (!source) continue;
+    for (const [rawKey, rawValue] of Object.entries(source)) {
+      const key = canonicalPropertyKey(rawKey);
+      if (key === 'tags' || key.startsWith('block/')) continue;
+      const value = await propertyValueToCreateRef(rawValue);
+      if (value) props.set(key, value);
+    }
+  }
+  return props;
+}
+
+function dashboardContextProps(objectType: string): Set<string> {
+  const dashboard = dashboardPageForObjectType(objectType);
+  const props = new Set<string>();
+  if (!dashboard) return props;
+  for (const view of registry.viewDefinitions ?? []) {
+    if (view.dashboard !== dashboard) continue;
+    for (const filter of view.filters ?? []) {
+      if (filter.property) props.add(String(filter.property));
+      for (const prop of filter.propertyAny ?? []) props.add(String(prop));
+    }
+  }
+  return props;
+}
+
+function currentTypeNameCandidates(objectType: string): Set<string> {
+  const kebab = objectType.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+  return new Set([kebab, `related-${kebab}`]);
+}
+
+async function currentPageContextForCreate(): Promise<{
+  objectType: string | null;
+  pageRef: string;
+  props: Map<string, string>;
+} | null> {
   const current = await currentPageName();
   if (!current) return null;
   const page = await getPage(current);
   if (!page) return null;
   const visibleName = String(page.originalName ?? page.name ?? page.title ?? current).trim();
   const pageBlockId = blockId(page);
-  const isTaggedVenture = pageBlockId ? await pageHasClassTag(pageBlockId, 'Venture') : false;
-  const blocks = isTaggedVenture ? [] : await getBlocks(visibleName);
-  if (!isTaggedVenture && !pageHasVentureDashboardSections(blocks)) return null;
-  return visibleName ? `[[${visibleName}]]` : null;
+  const props = await readCurrentContextProps(visibleName, pageBlockId);
+  let objectType = String(props.get('lss-object-type') ?? '').trim() || null;
+  if (!objectType && pageBlockId) {
+    for (const obj of allObjects()) {
+      if (await pageHasClassTag(pageBlockId, safeTag(obj.tag))) {
+        objectType = obj.name;
+        break;
+      }
+    }
+  }
+  if (!objectType) objectType = inferObjectTypeFromSections(await getBlocks(visibleName));
+  return visibleName ? { objectType, pageRef: `[[${visibleName}]]`, props } : null;
 }
 
 async function defaultCreateOverrides(o: RegistryObject): Promise<Record<string, string>> {
-  if (o.name === 'Venture' || !uniqueProps(o).includes('venture')) return {};
-  const currentVenture = await currentVentureRefForCreate();
-  return currentVenture ? { venture: currentVenture } : {};
+  const context = await currentPageContextForCreate();
+  if (!context?.objectType || context.objectType === o.name) return {};
+  const objectProps = new Set(uniqueProps(o));
+  const overrides: Record<string, string> = {};
+  const dashboardProps = dashboardContextProps(context.objectType);
+  const directProps = currentTypeNameCandidates(context.objectType);
+
+  for (const prop of objectProps) {
+    const spec = propertySpec(prop);
+    const type = String(spec?.type ?? '').toLowerCase();
+    if (type !== 'node') continue;
+    const targets = (((spec as { targets?: unknown[] } | undefined)?.targets ?? [])).map(String);
+    const targetsCurrent = targets.includes(context.objectType);
+    if ((dashboardProps.has(prop) || directProps.has(prop)) && targetsCurrent) {
+      overrides[prop] = context.pageRef;
+    }
+  }
+
+  for (const prop of objectProps) {
+    if (overrides[prop] || !context.props.has(prop)) continue;
+    const spec = propertySpec(prop);
+    if (String(spec?.type ?? '').toLowerCase() === 'node') {
+      overrides[prop] = context.props.get(prop) ?? '';
+    }
+  }
+
+  return overrides;
 }
 
 function entityPageBody(o: RegistryObject, title: string, overrides: Record<string, string> = {}): string {
@@ -193,6 +313,7 @@ async function insertFormByName(r: Result, objectName: string): Promise<void> {
     r.errors.push(`unknown form type: ${objectName}`);
     return;
   }
+  const overrides = await defaultCreateOverrides(o);
   await insertAtCursor(r, formBlockBody(o), `${o.name} form block`);
   // Set properties via upsert on the inserted block (not as text in content) so they are proper block properties.
   // The #tag will also trigger auto-repair.
@@ -202,7 +323,7 @@ async function insertFormByName(r: Result, objectName: string): Promise<void> {
     const insertedBlockId = current ? blockId(current) : null;
     if (insertedBlockId && logseq.Editor.upsertBlockProperty) {
       for (const p of uniqueProps(o)) {
-        const raw = defaultPropertyValueForCreate(p, o);
+        const raw = defaultPropertyValueForCreate(p, o, overrides);
         let val = await resolveUpsertPropertyValue(p, raw);
         if (val == null && isDateProperty(p)) {
           val = toJournalDay(raw);
@@ -214,6 +335,9 @@ async function insertFormByName(r: Result, objectName: string): Promise<void> {
     }
   } catch {}
   r.notes.push(`Inserted ${o.name} block at the cursor. Fill relationship fields with page refs, not plain text.`);
+  for (const [prop, value] of Object.entries(overrides)) {
+    r.notes.push(`Set ${prop} from current context: ${value}`);
+  }
 }
 
 export async function newVenture(r: Result): Promise<void> {

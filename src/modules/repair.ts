@@ -34,7 +34,7 @@ import { formatError, sleep } from '../core/runner';
 import { fixPhantomTagParenSyntax, safePageName, safeTag, tsKey } from '../core/names';
 import type { Result } from '../core/types';
 import type { RegistryObject } from '../registry/types';
-import { allObjects, propertySpec, templateDefByObjectType } from '../registry';
+import { allObjects, dashboardPageForObjectType, propertySpec, templateDefByObjectType } from '../registry';
 import {
   configureDbAdvancedQueryBlock,
   recreateDbAdvancedQueryBlock,
@@ -42,6 +42,7 @@ import {
   resolveQueryClassTagId,
   dashboardQueryBlockForViewAsync,
   dbAdvancedQueryBlockNeedsStructureRepair,
+  filterProps,
   findAllQueryBlocksInSectionAsync,
   inspectDbQueryBlockStructure,
   isAdvancedQueryBlockContent,
@@ -1516,36 +1517,40 @@ async function repairLinkedParentDashboards(
   currentPage: string,
 ): Promise<number> {
   let total = 0;
-  if (objectType === 'Function' && props.has('venture')) {
-    for (const ref of repairPageRefsFromValue(props.get('venture')!)) {
-      result.notes.push(
-        `Linked parent repair: Function ${currentPage} points to Venture [[${ref}]]. Refreshing parent Functions query only.`,
-      );
-      const ventureName = await resolveVisibleNodeToken(result, ref);
-      const ventureBlocks = await getBlocks(ventureName);
-      total += await repairDashboardQueries(
-        result,
-        ventureName,
-        ventureBlocks,
-        'Venture',
-        new Set(['Functions']),
-      );
-      markRepairCooldown(ventureName);
-    }
-  }
-  if ((objectType === 'Project' || objectType === 'WorkStream') && props.has('venture')) {
-    for (const ref of repairPageRefsFromValue(props.get('venture')!)) {
-      result.notes.push(`Linked parent repair: ${ref} Functions query from ${currentPage}.`);
-      const ventureName = await resolveVisibleNodeToken(result, ref);
-      const ventureBlocks = await getBlocks(ventureName);
-      total += await repairDashboardQueries(
-        result,
-        ventureName,
-        ventureBlocks,
-        'Venture',
-        new Set(['Functions']),
-      );
-      markRepairCooldown(ventureName);
+  const repairedKeys = new Set<string>();
+
+  for (const [prop, rawValue] of props.entries()) {
+    const spec = propertySpec(prop);
+    if (String(spec?.type ?? '').toLowerCase() !== 'node') continue;
+    const refs = repairPageRefsFromValue(rawValue);
+    if (!refs.length) continue;
+
+    const targets = ((spec as { targets?: unknown[] } | undefined)?.targets ?? []).map(String).filter(Boolean);
+    for (const targetType of targets) {
+      const dashboard = dashboardPageForObjectType(targetType);
+      const template = templateDefByObjectType(targetType);
+      if (!dashboard || !template) continue;
+      const sections = new Set<string>();
+      for (const view of viewDefinitionsSafe(template)) {
+        if (view.dashboard !== dashboard) continue;
+        if ((view.filters ?? []).some((filter) => filterProps(filter).includes(prop))) {
+          sections.add(String(view.section ?? '').trim());
+        }
+      }
+      if (!sections.size) continue;
+
+      for (const ref of refs) {
+        const parentName = await resolveVisibleNodeToken(result, ref);
+        const key = `${targetType}:${parentName}:${[...sections].sort().join('|')}`;
+        if (repairedKeys.has(key)) continue;
+        repairedKeys.add(key);
+        result.notes.push(
+          `Linked parent repair: ${objectType ?? 'object'} ${currentPage} points to ${targetType} [[${parentName}]] via ${prop}; refreshing ${[...sections].join(', ')}.`,
+        );
+        const parentBlocks = await getBlocks(parentName);
+        total += await repairDashboardQueries(result, parentName, parentBlocks, targetType, sections);
+        markRepairCooldown(parentName);
+      }
     }
   }
   return total;

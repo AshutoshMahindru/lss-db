@@ -3,6 +3,9 @@ import fs from 'fs';
 const registry = JSON.parse(fs.readFileSync('src/registry/data.json', 'utf8'));
 const navigationSource = fs.readFileSync('src/modules/navigation.ts', 'utf8');
 const setupSource = fs.readFileSync('src/modules/setup.ts', 'utf8');
+const createSource = fs.readFileSync('src/modules/create.ts', 'utf8');
+const repairSource = fs.readFileSync('src/modules/repair.ts', 'utf8');
+const queriesSource = fs.readFileSync('src/modules/queries.ts', 'utf8');
 
 function fail(message) {
   throw new Error(message);
@@ -147,6 +150,27 @@ for (const required of [
 }
 if (/\.addTagProperty\s*\(/.test(setupSource)) {
   fail('setup must not add LSS entity schema properties to native tags');
+}
+for (const [label, source, required] of [
+  [
+    'create context inheritance',
+    createSource,
+    ['defaultCreateOverrides', 'dashboardContextProps', 'insertFormByName', 'Set ${prop} from current context'],
+  ],
+  [
+    'generic linked parent repair',
+    repairSource,
+    ['dashboardPageForObjectType', 'filterProps(filter).includes(prop)', 'Linked parent repair:'],
+  ],
+  [
+    'dashboard current-page text fallback',
+    queriesSource,
+    ['currentPageTextFallbackValues', 'queryDbCurrentPagePropertyExpr', 'safePageName(raw).toUpperCase()'],
+  ],
+]) {
+  for (const text of required) {
+    if (!source.includes(text)) fail(`${label} missing safeguard: ${text}`);
+  }
 }
 
 console.log(
