@@ -8,6 +8,7 @@ const repairSource = fs.readFileSync('src/modules/repair.ts', 'utf8');
 const queriesSource = fs.readFileSync('src/modules/queries.ts', 'utf8');
 const autoRepairSource = fs.readFileSync('src/modules/auto-repair.ts', 'utf8');
 const registerSource = fs.readFileSync('src/commands/register.ts', 'utf8');
+const dbPropertiesSource = fs.readFileSync('src/core/db-properties.ts', 'utf8');
 
 function fail(message) {
   throw new Error(message);
@@ -220,6 +221,11 @@ for (const [label, source, required] of [
     'setup candidate noise filtering',
     repairSource + fs.readFileSync('src/modules/diagnose.ts', 'utf8'),
     ['| - |:)', 'isSetupTargetTagNoise', 'isSetupFunctionTagNoise'],
+  ],
+  [
+    'db identity matching',
+    dbPropertiesSource,
+    ['entityIdentityCandidates', 'expandPageIdentityCandidates', 'for (const identity of identities)', 'targets.has(String(candidate))'],
   ],
 ]) {
   for (const text of required) {

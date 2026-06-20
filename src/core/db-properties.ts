@@ -188,21 +188,6 @@ export function coerceNodePropertyReadValue(value: unknown): unknown {
   return id != null ? id : value;
 }
 
-export async function readRelationshipPropertyValue(
-  pageBlockId: string,
-  shortKey: string,
-): Promise<unknown> {
-  if (logseq.Editor.getBlockProperty) {
-    try {
-      const direct = await logseq.Editor.getBlockProperty(pageBlockId, shortKey);
-      if (direct != null) return coerceNodePropertyReadValue(direct);
-    } catch {
-      /* ignore */
-    }
-  }
-  return undefined;
-}
-
 export function isDbPageRefValue(value: unknown): boolean {
   const isRef = (item: unknown): boolean => {
     if (item == null) return false;
@@ -243,6 +228,61 @@ export function entityIdentity(entity: unknown): string | number | null {
   if (typeof entity === 'string' || typeof entity === 'number') return entity;
   const record = entity as Record<string, unknown>;
   return (record.uuid as string) ?? (record.id as string | number) ?? null;
+}
+
+export function entityIdentityCandidates(entity: unknown): Array<string | number> {
+  const out: Array<string | number> = [];
+  const add = (value: unknown) => {
+    if (value == null) return;
+    if (typeof value !== 'string' && typeof value !== 'number') return;
+    const raw = String(value).trim();
+    if (!raw) return;
+    if (!out.some((item) => String(item) === raw)) out.push(value);
+  };
+  if (typeof entity === 'string' || typeof entity === 'number') {
+    add(entity);
+    return out;
+  }
+  if (entity && typeof entity === 'object') {
+    const record = entity as Record<string, unknown>;
+    add(record.id);
+    add(record[':db/id']);
+    add(record['db/id']);
+    add(record.uuid);
+    add(record[':block/uuid']);
+    add(record['block/uuid']);
+  }
+  return out;
+}
+
+async function expandPageIdentityCandidates(identity: string | number): Promise<Set<string>> {
+  const targets = new Set(entityIdentityCandidates(identity).map((value) => String(value)));
+  const raw = String(identity ?? '').trim();
+  if (!raw) return targets;
+  const page =
+    (await getPage(raw)) ||
+    (await getPage(safePageName(raw))) ||
+    (await getPage(raw.toLowerCase()));
+  for (const candidate of entityIdentityCandidates(page)) targets.add(String(candidate));
+  return targets;
+}
+
+export async function readRelationshipPropertyValue(
+  pageBlockId: string,
+  shortKey: string,
+): Promise<unknown> {
+  if (logseq.Editor.getBlockProperty) {
+    const identities = await expandPageIdentityCandidates(pageBlockId);
+    for (const identity of identities) {
+      try {
+        const direct = await logseq.Editor.getBlockProperty(identity, shortKey);
+        if (direct != null) return coerceNodePropertyReadValue(direct);
+      } catch {
+        /* try next identity form */
+      }
+    }
+  }
+  return undefined;
 }
 
 export function nativePropertySchema(spec: NativePropertySpec): Record<string, unknown> {
@@ -404,12 +444,12 @@ export async function pageHasClassTag(pageIdentity: string | number, tagName: st
   try {
     const objects = await logseq.Editor.getTagObjects(tagName);
     if (!objects?.length) return false;
-    const target = String(pageIdentity);
+    const targets = await expandPageIdentityCandidates(pageIdentity);
     return objects.some((obj) => {
-      const record = obj as Record<string, unknown>;
-      const uuid = record.uuid;
-      const id = record.id;
-      return (uuid != null && String(uuid) === target) || (id != null && String(id) === target);
+      for (const candidate of entityIdentityCandidates(obj)) {
+        if (targets.has(String(candidate))) return true;
+      }
+      return false;
     });
   } catch {
     return false;
