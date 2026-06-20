@@ -95,6 +95,56 @@ async function readAllPageProperties(pageName: string, pageBlockId: string): Pro
   return out;
 }
 
+function pickFirstPropertyField(...sources: Array<Record<string, unknown> | null | undefined>): unknown {
+  const keys = [
+    'type',
+    'cardinality',
+    ':logseq.property/type',
+    'logseq.property/type',
+    ':logseq.property/cardinality',
+    'logseq.property/cardinality',
+    ':logseq.property/node-tags',
+    'logseq.property/node-tags',
+    ':logseq.property/classes',
+    'logseq.property/classes',
+  ];
+  const out: Record<string, unknown> = {};
+  for (const src of sources) {
+    if (!src) continue;
+    for (const key of keys) {
+      if (src[key] != null && out[key] == null) out[key] = src[key];
+    }
+  }
+  return out;
+}
+
+async function nativePropertyDebugLines(name: string): Promise<string[]> {
+  const lines: string[] = [];
+  if (!logseq.Editor.getProperty) {
+    lines.push(`${name}-native-property:: getProperty unavailable`);
+    return lines;
+  }
+  const prop = (await logseq.Editor.getProperty(name).catch(() => null)) as Record<string, unknown> | null;
+  if (!prop) {
+    lines.push(`${name}-native-property:: missing`);
+    return lines;
+  }
+  const identity = entityIdentity(prop);
+  const blockProps =
+    identity != null && logseq.Editor.getBlockProperties
+      ? ((await logseq.Editor.getBlockProperties(identity as any).catch(() => null)) as Record<string, unknown> | null)
+      : null;
+  const propProps = (prop.properties as Record<string, unknown> | undefined) ?? null;
+  lines.push(`${name}-native-property:: present`);
+  lines.push(`${name}-native-id:: ${formatValue(prop.id)}`);
+  lines.push(`${name}-native-uuid:: ${formatValue(prop.uuid)}`);
+  lines.push(`${name}-native-ident:: ${formatValue(prop.ident)}`);
+  lines.push(`${name}-native-summary:: ${formatValue(pickFirstPropertyField(prop, propProps, blockProps))}`);
+  lines.push(`${name}-native-property-keys:: ${Object.keys(propProps ?? {}).sort().join(', ') || '(none)'}`);
+  lines.push(`${name}-native-block-property-keys:: ${Object.keys(blockProps ?? {}).sort().join(', ') || '(none)'}`);
+  return lines;
+}
+
 function isSetupFunctionTagNoise(name: string, props: Record<string, unknown>): boolean {
   const label = visiblePageLabel(name);
   if (getCanonicalProp(props, 'lss-kind') != null) return true;
@@ -1047,6 +1097,9 @@ export async function diagnoseCurrentPage(r: Result): Promise<void> {
         );
       }
     }
+    lines.push('');
+    lines.push('## Native relationship property schema');
+    lines.push(...(await nativePropertyDebugLines('venture')));
   }
 
   const report = lines.join('\n');

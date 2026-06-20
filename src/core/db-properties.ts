@@ -212,6 +212,7 @@ export type NativePropertySpec = {
   type?: string;
   cardinality?: string;
   choices?: string[];
+  targets?: string[];
 };
 
 export async function isDbGraph(): Promise<boolean> {
@@ -310,6 +311,39 @@ async function ensureChoicePropertyValues(name: string, choices: string[]): Prom
   await logseq.Editor.upsertBlockProperty(propId, ':logseq.property/closed-values', choices);
 }
 
+async function resolveTagIdsForNodeProperty(targets: string[] = []): Promise<number[]> {
+  const ids: number[] = [];
+  for (const target of targets) {
+    const tagName = String(target ?? '').trim();
+    if (!tagName) continue;
+    const tag =
+      (await logseq.Editor.getTag?.(tagName).catch(() => null)) ||
+      (await logseq.Editor.getTagsByName?.(tagName).then((matches) => matches?.[0] ?? null).catch(() => null));
+    const id = (tag as Record<string, unknown> | null)?.id;
+    if (id != null && !Number.isNaN(Number(id))) ids.push(Number(id));
+  }
+  return [...new Set(ids)];
+}
+
+async function ensureNodePropertyTargetTags(name: string, spec: NativePropertySpec): Promise<string | null> {
+  if (String(spec.type ?? '').toLowerCase() !== 'node') return null;
+  const targets = (spec.targets ?? []).map(String).filter(Boolean);
+  if (!targets.length) return null;
+  if (!logseq.Editor.setPropertyNodeTags) {
+    return `node target tags not configured; setPropertyNodeTags API unavailable for ${targets.join(', ')}`;
+  }
+  if (!logseq.Editor.getProperty) return `node target tags not configured; getProperty API unavailable`;
+  const property = await logseq.Editor.getProperty(name).catch(() => null);
+  const propertyIdentity =
+    (property as Record<string, unknown> | null)?.uuid ??
+    (property as Record<string, unknown> | null)?.id;
+  if (propertyIdentity == null) return `node target tags not configured; property entity not found`;
+  const tagIds = await resolveTagIdsForNodeProperty(targets);
+  if (!tagIds.length) return `node target tags not configured; target tag(s) missing: ${targets.join(', ')}`;
+  await logseq.Editor.setPropertyNodeTags(propertyIdentity as any, tagIds);
+  return `node target tags configured: ${targets.map((target) => `#${target}`).join(', ')}`;
+}
+
 export type EnsureNativePropertyResult = {
   name: string;
   created: boolean;
@@ -339,6 +373,17 @@ export async function ensureNativeProperty(spec: NativePropertySpec): Promise<En
     : null;
 
   if (existing) {
+    let nodeTargetNote: string | null = null;
+    try {
+      nodeTargetNote = await ensureNodePropertyTargetTags(name, spec);
+    } catch (error) {
+      const message = formatError(error);
+      if (isPluginPropertyOwnershipError(message)) {
+        nodeTargetNote = 'property is owned by Logseq or another plugin; node target tags left unchanged';
+      } else {
+        nodeTargetNote = `node target tags not updated: ${message}`;
+      }
+    }
     if (String(spec.type ?? '').toLowerCase() === 'choice' && Array.isArray(spec.choices)) {
       try {
         await ensureChoicePropertyValues(name, spec.choices);
@@ -353,15 +398,19 @@ export async function ensureNativeProperty(spec: NativePropertySpec): Promise<En
         return skippedNativeProperty(name, `choice values not updated: ${message}`);
       }
     }
-    return skippedNativeProperty(name, 'property already exists in graph; schema left unchanged');
+    return skippedNativeProperty(
+      name,
+      ['property already exists in graph; schema left unchanged', nodeTargetNote].filter(Boolean).join('; '),
+    );
   }
 
   try {
     await logseq.Editor.upsertProperty(name, nativePropertySchema(spec), { name: displayName });
+    const nodeTargetNote = await ensureNodePropertyTargetTags(name, spec);
     if (String(spec.type ?? '').toLowerCase() === 'choice' && Array.isArray(spec.choices)) {
       await ensureChoicePropertyValues(name, spec.choices);
     }
-    return { name, created: true };
+    return { name, created: true, note: nodeTargetNote ?? undefined };
   } catch (error) {
     const message = formatError(error);
     if (isPropertySchemaConflict(message)) {

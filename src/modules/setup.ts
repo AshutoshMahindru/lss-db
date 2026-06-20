@@ -191,7 +191,7 @@ export async function step10db(r: Result): Promise<void> {
     try {
       const ensured = await ensureNativeProperty(p);
       if (ensured?.created) {
-        r.actions.push(`CREATE native property: ${name}`);
+        r.actions.push(`CREATE native property: ${name}${ensured.note ? ` (${ensured.note})` : ''}`);
       } else if (ensured?.skipped) {
         r.notes.push(`SKIP native property ${name}: ${ensured.note ?? 'already exists'}`);
       } else if (!ensured) {
