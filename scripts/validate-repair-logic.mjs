@@ -79,6 +79,31 @@ function normalizePageRefName(name) {
     .toLowerCase();
 }
 
+function visiblePageLabel(name) {
+  let raw = String(name ?? '').trim();
+  for (let i = 0; i < 5; i++) {
+    const wiki = raw.match(/^\[\[([\s\S]*)\]\]$/);
+    if (!wiki?.[1]) break;
+    raw = wiki[1].trim();
+  }
+  return raw;
+}
+
+function safePageName(name) {
+  return String(name ?? '')
+    .split('/')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join(' - ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function relationshipRefText(value) {
+  const label = safePageName(visiblePageLabel(value));
+  return label ? `[[${label}]]` : '';
+}
+
 function safeTag(tag) {
   return String(tag ?? '')
     .replace(/^#/, '')
@@ -672,6 +697,17 @@ const tests = [
     }
     if (queryBlockNeedsRepair(expected, expected)) {
       throw new Error('advanced DSL query should not need repair');
+    }
+  },
+  () => {
+    if (visiblePageLabel('[[[[FGPL]]]]') !== 'FGPL') {
+      throw new Error('nested page refs should unwrap to the page label');
+    }
+    if (relationshipRefText('[[[[FGPL]]]]') !== '[[FGPL]]') {
+      throw new Error('relationship refs should be written exactly once');
+    }
+    if (relationshipRefText('Area/Work') !== '[[Area - Work]]') {
+      throw new Error('relationship refs should use safe page names');
     }
   },
   () => {

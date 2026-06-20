@@ -31,7 +31,7 @@ import {
   walkBlocks,
 } from '../core/editor';
 import { formatError, sleep } from '../core/runner';
-import { fixPhantomTagParenSyntax, safePageName, safeTag, tsKey } from '../core/names';
+import { fixPhantomTagParenSyntax, looksLikeUuid, safePageName, safeTag, tsKey, visiblePageLabel } from '../core/names';
 import type { Result } from '../core/types';
 import type { RegistryObject } from '../registry/types';
 import { allObjects, dashboardPageForObjectType, propertySpec, templateDefByObjectType } from '../registry';
@@ -79,9 +79,14 @@ function repairTagsFromValue(value: string): string[] {
 
 function repairPageRefsFromValue(value: string): string[] {
   const refs: string[] = [];
+  const whole = visiblePageLabel(String(value ?? '').trim());
+  if (whole && whole !== String(value ?? '').trim() && !whole.includes('[[') && !whole.includes(']]')) {
+    refs.push(whole);
+    return refs;
+  }
   const re = /\[\[([^\]]+)\]\]/g;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(String(value ?? '')))) if (m[1]) refs.push(m[1]);
+  while ((m = re.exec(String(value ?? '')))) if (m[1]) refs.push(visiblePageLabel(m[1]));
   return refs;
 }
 
@@ -294,11 +299,25 @@ function relationshipNamesFromRepairValue(value: string): string[] {
   if (refs.length) return refs;
   if (text.includes('#') || /^https?:/i.test(text)) return [];
   return text
-    .replace(/^\[/, '')
-    .replace(/\]$/, '')
+    .replace(/^\[+/, '')
+    .replace(/\]+$/, '')
     .split(',')
-    .map((x) => x.trim().replace(/^"|"$/g, ''))
+    .map((x) => visiblePageLabel(x.trim().replace(/^"|"$/g, '')))
     .filter(Boolean);
+}
+
+function relationshipRefText(value: string): string {
+  const label = safePageName(visiblePageLabel(value));
+  return label ? `[[${label}]]` : '';
+}
+
+function visibleRelationshipName(page: Record<string, unknown> | null | undefined, fallback: string): string {
+  const label = visiblePageLabel(
+    String(page?.originalName ?? page?.name ?? page?.title ?? '').trim(),
+  );
+  const fallbackLabel = visiblePageLabel(fallback);
+  if (!label || looksLikeUuid(label)) return fallbackLabel;
+  return label;
 }
 
 async function resolveRelationshipRepairValueToRefs(value: string): Promise<string> {
@@ -311,11 +330,13 @@ async function resolveRelationshipRepairValueToRefs(value: string): Promise<stri
       (await getPage(safePageName(name))) ||
       (await getPage(name.toLowerCase()));
     if (!page) {
-      refs.push(name.startsWith('[[') ? name : `[[${safePageName(name)}]]`);
+      const ref = relationshipRefText(name);
+      if (ref) refs.push(ref);
       continue;
     }
-    const visible = String(page.originalName ?? page.name ?? page.title ?? name).trim();
-    refs.push(`[[${safePageName(visible)}]]`);
+    const visible = visibleRelationshipName(page as Record<string, unknown>, name);
+    const ref = relationshipRefText(visible);
+    if (ref) refs.push(ref);
   }
   return refs.join(', ');
 }
@@ -362,12 +383,7 @@ async function candidateRefsFromTaggedPages(targetType: string): Promise<string[
       (label ? await getPage(label) : null) ||
       (record.id != null ? await resolvePageFromIdentity(record.id as string | number) : null) ||
       (blockId(item) ? await resolvePageFromIdentity(blockId(item)!) : null);
-    const visible = String(
-      (page as Record<string, unknown> | null)?.originalName ??
-        (page as Record<string, unknown> | null)?.name ??
-        (page as Record<string, unknown> | null)?.title ??
-        label,
-    ).trim();
+    const visible = visibleRelationshipName(page as Record<string, unknown> | null, label);
     if (visible && !isSetupTargetTagNoise(visible, ((page as Record<string, unknown> | null)?.properties ?? {}) as Record<string, unknown>)) {
       refs.push(visible);
     }
@@ -402,11 +418,12 @@ async function inferMissingRequiredRelationshipProps(
 
     if (candidates.size === 1) {
       const ref = [...candidates][0];
-      props.set(key, `[[${safePageName(ref)}]]`);
-      result.actions.push(`INFERRED missing relationship ${key} for ${pageName}: [[${safePageName(ref)}]]`);
+      const refText = relationshipRefText(ref);
+      props.set(key, refText);
+      result.actions.push(`INFERRED missing relationship ${key} for ${pageName}: ${refText}`);
     } else if (candidates.size > 1 && (obj.requiredProperties ?? []).includes(key)) {
       result.notes.push(
-        `Could not infer required relationship ${key} for ${pageName}; candidates: ${[...candidates].map((ref) => `[[${safePageName(ref)}]]`).join(', ')}`,
+        `Could not infer required relationship ${key} for ${pageName}; candidates: ${[...candidates].map(relationshipRefText).join(', ')}`,
       );
     }
   }

@@ -55,9 +55,13 @@ export function tagObjectLabel(entity: Record<string, unknown> | null | undefine
 }
 
 export function visiblePageLabel(name: string): string {
-  const raw = String(name ?? '').trim();
-  const wiki = raw.match(/^\[\[([^\]]+)\]\]$/);
-  return wiki?.[1]?.trim() ?? raw;
+  let raw = String(name ?? '').trim();
+  for (let i = 0; i < 5; i++) {
+    const wiki = raw.match(/^\[\[([\s\S]*)\]\]$/);
+    if (!wiki?.[1]) break;
+    raw = wiki[1].trim();
+  }
+  return raw;
 }
 
 export function safeTag(tag: string): string {
@@ -98,4 +102,3 @@ export function todayRef(): string {
 export function escapeRegExp(s: string): string {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
-
