@@ -320,6 +320,98 @@ async function resolveRelationshipRepairValueToRefs(value: string): Promise<stri
   return refs.join(', ');
 }
 
+function pageRefsInBlocks(blocks: any[]): string[] {
+  const refs = new Set<string>();
+  for (const block of walkBlocks(blocks)) {
+    const text = String(block?.content ?? block?.title ?? '');
+    for (const ref of repairPageRefsFromValue(text)) refs.add(ref);
+  }
+  return [...refs];
+}
+
+function isSetupTargetTagNoise(name: string, props: Record<string, unknown>): boolean {
+  const label = safePageName(name);
+  if (props['lss-kind'] != null || props[':plugin.property.logseq-lss-db-final-plugin/lss-kind'] != null) return true;
+  if (/^(Entity-Page|DB Tag|Tag Properties|Template|Word Extender|LSS Reports|Area:)/i.test(label)) return true;
+  if (/Entity Schema Page|Naming Rule|Template Reference|Tag Properties:/i.test(label)) return true;
+  return false;
+}
+
+async function pageHasTargetTag(pageName: string, targetType: string): Promise<boolean> {
+  const page = (await getPage(pageName)) || (await getPage(safePageName(pageName))) || (await getPage(pageName.toLowerCase()));
+  const pageId = blockId(page);
+  return pageId ? pageHasClassTag(pageId, targetType) : false;
+}
+
+async function candidateRefsFromPageLinks(blocks: any[], targetType: string): Promise<string[]> {
+  const out: string[] = [];
+  for (const ref of pageRefsInBlocks(blocks)) {
+    if (await pageHasTargetTag(ref, targetType)) out.push(ref);
+  }
+  return [...new Set(out)];
+}
+
+async function candidateRefsFromTaggedPages(targetType: string): Promise<string[]> {
+  if (!logseq.Editor.getTagObjects) return [];
+  const objects = await logseq.Editor.getTagObjects(targetType).catch(() => null);
+  const refs: string[] = [];
+  for (const item of objects ?? []) {
+    const record = item as Record<string, unknown>;
+    const label = String(record.originalName ?? record.name ?? record.title ?? '').trim();
+    const page =
+      (label ? await getPage(label) : null) ||
+      (record.id != null ? await resolvePageFromIdentity(record.id as string | number) : null) ||
+      (blockId(item) ? await resolvePageFromIdentity(blockId(item)!) : null);
+    const visible = String(
+      (page as Record<string, unknown> | null)?.originalName ??
+        (page as Record<string, unknown> | null)?.name ??
+        (page as Record<string, unknown> | null)?.title ??
+        label,
+    ).trim();
+    if (visible && !isSetupTargetTagNoise(visible, ((page as Record<string, unknown> | null)?.properties ?? {}) as Record<string, unknown>)) {
+      refs.push(visible);
+    }
+  }
+  return [...new Set(refs)];
+}
+
+async function inferMissingRequiredRelationshipProps(
+  result: Result,
+  obj: RegistryObject,
+  props: Map<string, string>,
+  blocks: any[],
+  pageName: string,
+): Promise<void> {
+  for (const key of uniqueObjectProps(obj)) {
+    if (String(props.get(key) ?? '').trim()) continue;
+    const spec = propertySpec(key);
+    if (String(spec?.type ?? '').toLowerCase() !== 'node') continue;
+    const targets = ((spec as { targets?: unknown[] } | undefined)?.targets ?? []).map(String).filter(Boolean);
+    if (!targets.length) continue;
+
+    const candidates = new Set<string>();
+    for (const target of targets) {
+      for (const ref of await candidateRefsFromPageLinks(blocks, target)) candidates.add(ref);
+    }
+
+    if (candidates.size === 0 && (obj.requiredProperties ?? []).includes(key)) {
+      for (const target of targets) {
+        for (const ref of await candidateRefsFromTaggedPages(target)) candidates.add(ref);
+      }
+    }
+
+    if (candidates.size === 1) {
+      const ref = [...candidates][0];
+      props.set(key, `[[${safePageName(ref)}]]`);
+      result.actions.push(`INFERRED missing relationship ${key} for ${pageName}: [[${safePageName(ref)}]]`);
+    } else if (candidates.size > 1 && (obj.requiredProperties ?? []).includes(key)) {
+      result.notes.push(
+        `Could not infer required relationship ${key} for ${pageName}; candidates: ${[...candidates].map((ref) => `[[${safePageName(ref)}]]`).join(', ')}`,
+      );
+    }
+  }
+}
+
 async function normalizeRelationshipPropsForRepair(result: Result, props: Map<string, string>): Promise<void> {
   for (const [key, value] of [...props.entries()]) {
     const shortKey = canonicalPropertyKey(key);
@@ -870,6 +962,7 @@ async function repairPageCore(
         props.set(key, def || '');
         result.notes.push(`Ensured canonical property from #${inferredType}: ${key}`);
       }
+      await inferMissingRequiredRelationshipProps(result, obj, props, blocks, pageName);
     }
   }
 

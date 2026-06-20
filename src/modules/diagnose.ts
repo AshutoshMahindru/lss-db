@@ -1032,7 +1032,11 @@ export async function diagnoseCurrentPage(r: Result): Promise<void> {
     );
     lines.push(`venture-is-page-ref:: ${ventureIsRef ? 'yes' : 'no'}`);
     if (!typeOk) lines.push('- FIX: add page property lss-object-type = Function');
-    if (!ventureIsRef) {
+    if (String(venture ?? '').trim() === '') {
+      lines.push(
+        '- FIX: venture is missing; run `lss:50` on this Function to infer it from an explicit Venture link or the single Venture in the graph, otherwise select the parent Venture in the venture property',
+      );
+    } else if (!ventureIsRef) {
       lines.push(
         '- FIX: venture is plain text (e.g. "FTV"); run `lss:50` on this page, or clear venture and re-pick ftv from the venture dropdown',
       );
