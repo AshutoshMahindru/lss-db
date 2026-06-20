@@ -286,6 +286,53 @@ async function inferVentureFromIncomingFunctions(
 const RELATIONSHIP_PROPERTIES = new Set(relationshipPropertyNames());
 const SKIP_PROMOTE_KEYS = new Set(['tags', 'block/tags']);
 
+function relationshipNamesFromRepairValue(value: string): string[] {
+  const text = String(value ?? '').trim();
+  if (!text) return [];
+  const refs = repairPageRefsFromValue(text).map((x) => x.trim()).filter(Boolean);
+  if (refs.length) return refs;
+  if (text.includes('#') || /^https?:/i.test(text)) return [];
+  return text
+    .replace(/^\[/, '')
+    .replace(/\]$/, '')
+    .split(',')
+    .map((x) => x.trim().replace(/^"|"$/g, ''))
+    .filter(Boolean);
+}
+
+async function resolveRelationshipRepairValueToRefs(value: string): Promise<string> {
+  const names = relationshipNamesFromRepairValue(value);
+  if (!names.length) return value;
+  const refs: string[] = [];
+  for (const name of names) {
+    const page =
+      (await getPage(name)) ||
+      (await getPage(safePageName(name))) ||
+      (await getPage(name.toLowerCase()));
+    if (!page) {
+      refs.push(name.startsWith('[[') ? name : `[[${safePageName(name)}]]`);
+      continue;
+    }
+    const visible = String(page.originalName ?? page.name ?? page.title ?? name).trim();
+    refs.push(`[[${safePageName(visible)}]]`);
+  }
+  return refs.join(', ');
+}
+
+async function normalizeRelationshipPropsForRepair(result: Result, props: Map<string, string>): Promise<void> {
+  for (const [key, value] of [...props.entries()]) {
+    const shortKey = canonicalPropertyKey(key);
+    if (!RELATIONSHIP_PROPERTIES.has(shortKey)) continue;
+    const raw = String(value ?? '').trim();
+    if (!raw) continue;
+    const normalized = await resolveRelationshipRepairValueToRefs(raw);
+    if (normalized && normalized !== raw) {
+      props.set(shortKey, normalized);
+      result.actions.push(`NORMALIZED relationship property ${shortKey}: ${normalized}`);
+    }
+  }
+}
+
 function pageRecordIsJournal(page: any, pageName: string): boolean {
   if (!page) return false;
   const type = String(page.type ?? page[':block/type'] ?? '').toLowerCase();
@@ -824,6 +871,8 @@ async function repairPageCore(
       }
     }
   }
+
+  await normalizeRelationshipPropsForRepair(result, props);
 
   // Clean invalid node relationship values (e.g. wrong Venture id or unresolvable text)
   // via plugin when user cannot manually remove the property in UI.

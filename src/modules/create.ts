@@ -2,13 +2,16 @@ import { MODE } from '../config';
 import {
   appendManagedBlock,
   blockId,
+  currentPageName,
   ensurePage,
+  getBlocks,
   getPage,
   insertAtCursor,
+  walkBlocks,
 } from '../core/editor';
 import { scheduleAutoRepair } from './auto-repair';
 import { repairNamedPage } from './repair';
-import { isDateProperty, resolveUpsertPropertyValue, toJournalDay } from '../core/db-properties';
+import { isDateProperty, pageHasClassTag, resolveUpsertPropertyValue, toJournalDay } from '../core/db-properties';
 import { sleep } from '../core/runner';
 import { normalizeAreaRef, objectByName } from '../registry';
 import { safeTag, todayRef, tsKey } from '../core/names';
@@ -26,8 +29,13 @@ function uniqueProps(o: RegistryObject): string[] {
   return out;
 }
 
-function defaultPropertyValueForCreate(prop: string, o: RegistryObject): string {
+function defaultPropertyValueForCreate(
+  prop: string,
+  o: RegistryObject,
+  overrides: Record<string, string> = {},
+): string {
   const p = String(prop);
+  if (Object.prototype.hasOwnProperty.call(overrides, p)) return overrides[p] ?? '';
   const area = normalizeAreaRef(o.area);
   if (p === 'area' || p === 'areas') return `[[${area}]]`;
   if (p === 'status') return safeTag(o.tag) === 'ActionItem' ? 'Todo' : 'active';
@@ -56,13 +64,43 @@ function propLine(prop: string, o: RegistryObject): string {
   return `${p}:: `;
 }
 
-function entityPageBody(o: RegistryObject, title: string): string {
+function pageHasVentureDashboardSections(blocks: any[]): boolean {
+  const sections = new Set<string>();
+  for (const block of walkBlocks(blocks)) {
+    const text = String(block?.content ?? '').trim();
+    if (/^(Functions|Projects|Workstreams)\b/i.test(text)) {
+      sections.add(text.split(/\s+/)[0].toLowerCase());
+    }
+  }
+  return sections.has('functions') && sections.has('projects') && sections.has('workstreams');
+}
+
+async function currentVentureRefForCreate(): Promise<string | null> {
+  const current = await currentPageName();
+  if (!current) return null;
+  const page = await getPage(current);
+  if (!page) return null;
+  const visibleName = String(page.originalName ?? page.name ?? page.title ?? current).trim();
+  const pageBlockId = blockId(page);
+  const isTaggedVenture = pageBlockId ? await pageHasClassTag(pageBlockId, 'Venture') : false;
+  const blocks = isTaggedVenture ? [] : await getBlocks(visibleName);
+  if (!isTaggedVenture && !pageHasVentureDashboardSections(blocks)) return null;
+  return visibleName ? `[[${visibleName}]]` : null;
+}
+
+async function defaultCreateOverrides(o: RegistryObject): Promise<Record<string, string>> {
+  if (o.name === 'Venture' || !uniqueProps(o).includes('venture')) return {};
+  const currentVenture = await currentVentureRefForCreate();
+  return currentVenture ? { venture: currentVenture } : {};
+}
+
+function entityPageBody(o: RegistryObject, title: string, overrides: Record<string, string> = {}): string {
   const tag = safeTag(o.tag);
   const lines: string[] = [];
   lines.push(`${title} #${tag}`);
   lines.push('');
   for (const p of uniqueProps(o)) {
-    const val = defaultPropertyValueForCreate(p, o);
+    const val = defaultPropertyValueForCreate(p, o, overrides);
     lines.push(`${p}:: ${val}`);
   }
   lines.push('');
@@ -96,6 +134,7 @@ async function createEntityByName(r: Result, objectName: string): Promise<void> 
     return;
   }
   const title = `New ${o.name} - ${tsKey()}`;
+  const overrides = await defaultCreateOverrides(o);
 
   // Build props, resolving dates to proper journal-day for DB graphs to avoid errors.
   const pageProps: Record<string, any> = {
@@ -104,7 +143,7 @@ async function createEntityByName(r: Result, objectName: string): Promise<void> 
     'lss-post-created': 'true',
   };
   for (const p of uniqueProps(o)) {
-    const raw = defaultPropertyValueForCreate(p, o);
+    const raw = defaultPropertyValueForCreate(p, o, overrides);
     let val = await resolveUpsertPropertyValue(p, raw);
     if (val == null && isDateProperty(p)) {
       val = toJournalDay(raw);
@@ -113,7 +152,7 @@ async function createEntityByName(r: Result, objectName: string): Promise<void> 
   }
   await ensurePage(r, title, pageProps);
 
-  await appendManagedBlock(r, title, `${MODE}-post-create-${o.name}-${tsKey()}`, entityPageBody(o, title));
+  await appendManagedBlock(r, title, `${MODE}-post-create-${o.name}-${tsKey()}`, entityPageBody(o, title, overrides));
 
   // Ensure properties using proper page block id (more reliable on DB graphs).
   // Resolve dates etc. to journal-day ints on DB so no "should be a journal date" errors.
@@ -122,7 +161,7 @@ async function createEntityByName(r: Result, objectName: string): Promise<void> 
     const pageBlockId = blockId(page) || title;
     if (logseq.Editor.upsertBlockProperty) {
       for (const p of uniqueProps(o)) {
-        const raw = defaultPropertyValueForCreate(p, o);
+        const raw = defaultPropertyValueForCreate(p, o, overrides);
         let val = await resolveUpsertPropertyValue(p, raw);
         if (val == null && isDateProperty(p)) {
           val = toJournalDay(raw);
@@ -143,6 +182,9 @@ async function createEntityByName(r: Result, objectName: string): Promise<void> 
   } catch {}
 
   r.notes.push(`Created placeholder page ${title}. Rename it to the real object name after review. (Schema ensured from #${o.tag})`);
+  if (overrides.venture) {
+    r.notes.push(`Set venture from current Venture page: ${overrides.venture}`);
+  }
 }
 
 async function insertFormByName(r: Result, objectName: string): Promise<void> {

@@ -118,10 +118,40 @@ async function queryDbPropertyRefExpr(shortKey: string, pageRef = '<% current pa
   return `(property ${propName} ${value})`;
 }
 
+function currentPageTextFallbackValues(currentPageName?: string): string[] {
+  const raw = String(currentPageName ?? '').trim();
+  if (!raw) return [];
+  const candidates = [
+    raw,
+    safePageName(raw),
+    raw.toLowerCase(),
+    safePageName(raw).toLowerCase(),
+    raw.toUpperCase(),
+    safePageName(raw).toUpperCase(),
+  ];
+  return [...new Set(candidates.map((value) => value.trim()).filter(Boolean))];
+}
+
+async function queryDbCurrentPagePropertyExpr(
+  shortKey: string,
+  pageRef = '<% current page %>',
+  currentPageName?: string,
+): Promise<string> {
+  const propName = await queryPropertyNameAsync(shortKey);
+  const parts = [`(property ${propName} ${pageRef === '<% current page %>' ? '<% current page %>' : queryValue(pageRef)})`];
+  if (pageRef === '<% current page %>') {
+    for (const value of currentPageTextFallbackValues(currentPageName)) {
+      parts.push(`(property ${propName} ${queryValue(value)})`);
+    }
+  }
+  return parts.length > 1 ? `(or ${parts.join(' ')})` : parts[0];
+}
+
 async function queryFilterExprAsync(
   filter: NonNullable<ViewDefinition['filters']>[number],
   pageRef = '<% current page %>',
   dbGraph = false,
+  currentPageName?: string,
 ): Promise<string | null> {
   const props = filterProps(filter);
   const op = String(filter.operator ?? '');
@@ -129,7 +159,7 @@ async function queryFilterExprAsync(
 
   if (op === 'includesCurrentPage') {
     if (dbGraph) {
-      const parts = await Promise.all(props.map((p) => queryDbPropertyRefExpr(p, pageRef)));
+      const parts = await Promise.all(props.map((p) => queryDbCurrentPagePropertyExpr(p, pageRef, currentPageName)));
       return parts.length > 1 ? `(or ${parts.join(' ')})` : parts[0];
     }
     const parts = await Promise.all(
@@ -187,12 +217,13 @@ export async function simpleQueryForViewAsync(
 export async function dbDashboardQueryForViewAsync(
   view: ViewDefinition,
   pageRef = '<% current page %>',
+  currentPageName?: string,
 ): Promise<string> {
   const parts: string[] = [];
   const tagExpr = queryDbPageClassTagExpr(view);
   if (tagExpr) parts.push(tagExpr);
   for (const filter of view.filters ?? []) {
-    const expr = await queryFilterExprAsync(filter, pageRef, true);
+    const expr = await queryFilterExprAsync(filter, pageRef, true, currentPageName);
     if (expr) parts.push(expr);
   }
   return parts.length ? `(and ${parts.join(' ')})` : '';
@@ -209,7 +240,7 @@ export async function advancedDashboardQueryEdnForViewAsync(
   _currentPageId?: number,
   _currentPageName?: string,
 ): Promise<string> {
-  const body = await dbDashboardQueryForViewAsync(view, '<% current page %>');
+  const body = await dbDashboardQueryForViewAsync(view, '<% current page %>', _currentPageName);
   return body ? `{:query ${body}}` : '';
 }
 
