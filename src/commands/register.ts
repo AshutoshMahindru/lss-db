@@ -43,6 +43,7 @@ import { repairCurrentPage } from '../modules/repair';
 import {
   maintInitializeSchema,
   maintVerifySchema,
+  resetVentureNativeProperty,
   setupAll,
   step1,
   step10db,
@@ -129,6 +130,7 @@ export function registerCommands(): void {
   register('lss: 50repair-current-page', repairCurrentPage);
   register('lss: 51diagnose-current-page', diagnoseCurrentPage);
   registerAlias('LSS: New Function', 'lss: 52new-function', newFunction);
+  registerAlias('LSS: Reset Venture Property', 'lss: 53reset-venture-property', resetVentureNativeProperty);
 
   // Additional spec aliases that map to existing handlers
   register('LSS: Initialize Schema (step-by-step)', maintInitializeSchema);

@@ -373,6 +373,20 @@ export async function ensureNativeProperty(spec: NativePropertySpec): Promise<En
     : null;
 
   if (existing) {
+    let schemaNote = 'property already exists in graph';
+    try {
+      await logseq.Editor.upsertProperty(name, nativePropertySchema(spec), { name: displayName });
+      schemaNote = 'property already exists in graph; schema refreshed';
+    } catch (error) {
+      const message = formatError(error);
+      if (isPropertySchemaConflict(message)) {
+        schemaNote = `property already exists in graph; schema left unchanged: ${message}`;
+      } else if (isPluginPropertyOwnershipError(message)) {
+        schemaNote = 'property is owned by Logseq or another plugin; schema left unchanged';
+      } else {
+        throw error;
+      }
+    }
     let nodeTargetNote: string | null = null;
     try {
       nodeTargetNote = await ensureNodePropertyTargetTags(name, spec);
@@ -400,7 +414,7 @@ export async function ensureNativeProperty(spec: NativePropertySpec): Promise<En
     }
     return skippedNativeProperty(
       name,
-      ['property already exists in graph; schema left unchanged', nodeTargetNote].filter(Boolean).join('; '),
+      [schemaNote, nodeTargetNote].filter(Boolean).join('; '),
     );
   }
 
