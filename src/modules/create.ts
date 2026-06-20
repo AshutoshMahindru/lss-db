@@ -156,7 +156,8 @@ function dashboardContextProps(objectType: string): Set<string> {
 
 function currentTypeNameCandidates(objectType: string): Set<string> {
   const kebab = objectType.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
-  return new Set([kebab, `related-${kebab}`]);
+  const compact = objectType.toLowerCase();
+  return new Set([compact, kebab, `related-${compact}`, `related-${kebab}`]);
 }
 
 async function currentPageContextForCreate(): Promise<{

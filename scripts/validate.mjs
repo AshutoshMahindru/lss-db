@@ -6,6 +6,8 @@ const setupSource = fs.readFileSync('src/modules/setup.ts', 'utf8');
 const createSource = fs.readFileSync('src/modules/create.ts', 'utf8');
 const repairSource = fs.readFileSync('src/modules/repair.ts', 'utf8');
 const queriesSource = fs.readFileSync('src/modules/queries.ts', 'utf8');
+const autoRepairSource = fs.readFileSync('src/modules/auto-repair.ts', 'utf8');
+const registerSource = fs.readFileSync('src/commands/register.ts', 'utf8');
 
 function fail(message) {
   throw new Error(message);
@@ -28,7 +30,7 @@ const entityTypes = requireArray('entityTypes');
 const formTypes = requireArray('formTypes');
 const wordExtenderTypes = requireArray('wordExtenderTypes');
 requireArray('relationshipRegistry');
-requireArray('propertyRegistry');
+const propertyRegistry = requireArray('propertyRegistry');
 requireArray('templates');
 requireArray('viewDefinitions');
 
@@ -100,6 +102,10 @@ requireIncludes(
 );
 
 const allObjects = [...entityTypes, ...formTypes, ...wordExtenderTypes];
+const objectNames = new Set(allObjects.map((object) => object.name));
+const objectTags = new Set(allObjects.map((object) => object.tag));
+const systemTargets = new Set(['Area', 'Template', 'Query', 'Task']);
+const propertyByName = new Map(propertyRegistry.map((property) => [property.name ?? property.property ?? property.key, property]));
 for (const object of allObjects) {
   for (const field of ['name', 'tag', 'schemaPage', 'nodeKind', 'requiredProperties', 'properties']) {
     if (object[field] == null || (Array.isArray(object[field]) && object[field].length === 0)) {
@@ -107,6 +113,34 @@ for (const object of allObjects) {
     }
   }
   if (!String(object.tag).trim()) fail(`${object.name} has blank tag`);
+  for (const property of [...(object.requiredProperties ?? []), ...(object.properties ?? [])]) {
+    if (!propertyByName.has(property)) fail(`${object.name} references unknown property ${property}`);
+  }
+}
+for (const property of propertyRegistry) {
+  const name = property.name ?? property.property ?? property.key;
+  for (const target of property.targets ?? []) {
+    if (!objectNames.has(target) && !systemTargets.has(target)) fail(`property ${name} has unknown target ${target}`);
+  }
+}
+for (const relationship of registry.relationshipRegistry ?? []) {
+  const property = relationship.property;
+  if (!propertyByName.has(property)) fail(`relationship ${property} has no property registry spec`);
+  for (const target of relationship.targets ?? []) {
+    if (!objectNames.has(target) && !systemTargets.has(target)) {
+      fail(`relationship ${property} has unknown target ${target}`);
+    }
+  }
+}
+for (const view of registry.viewDefinitions ?? []) {
+  for (const tag of view.sourceTags ?? []) {
+    if (!objectNames.has(tag) && !objectTags.has(tag)) fail(`view ${view.id} has unknown source tag ${tag}`);
+  }
+  for (const filter of view.filters ?? []) {
+    for (const property of [...(filter.property ? [filter.property] : []), ...(filter.propertyAny ?? [])]) {
+      if (!propertyByName.has(property)) fail(`view ${view.id} filters unknown property ${property}`);
+    }
+  }
 }
 
 if ((registry.decisions ?? {}).wealthAssetTag !== 'FinancialAsset') {
@@ -151,21 +185,41 @@ for (const required of [
 if (/\.addTagProperty\s*\(/.test(setupSource)) {
   fail('setup must not add LSS entity schema properties to native tags');
 }
+const commandLabels = [...navigationSource.matchAll(/label:\s*'([^']+)'/g)].map((match) => match[1]);
+if (commandLabels.length < 52) fail(`expected at least 52 command help labels, found ${commandLabels.length}`);
+for (const label of commandLabels) {
+  if (!registerSource.includes(label)) fail(`command help label is not registered: ${label}`);
+}
 for (const [label, source, required] of [
   [
     'create context inheritance',
     createSource,
-    ['defaultCreateOverrides', 'dashboardContextProps', 'insertFormByName', 'Set ${prop} from current context'],
+    ['defaultCreateOverrides', 'dashboardContextProps', 'insertFormByName', '`related-${compact}`', 'Set ${prop} from current context'],
   ],
   [
     'generic linked parent repair',
     repairSource,
-    ['dashboardPageForObjectType', 'filterProps(filter).includes(prop)', 'Linked parent repair:'],
+    ['dashboardPageForObjectType', 'filterProps(filter).includes(prop)', 'select or link the ${targetHint} page', 'Linked parent repair:'],
   ],
   [
     'dashboard current-page text fallback',
     queriesSource,
     ['currentPageTextFallbackValues', 'queryDbCurrentPagePropertyExpr', 'safePageName(raw).toUpperCase()'],
+  ],
+  [
+    'db-aware audit',
+    fs.readFileSync('src/modules/audit.ts', 'utf8'),
+    ['readPagePropertyText', 'findAllQueryBlocksInSectionAsync', '!/^\\d+$/.test(value.trim())'],
+  ],
+  [
+    'auto repair safe-name handling',
+    autoRepairSource,
+    ['Entity-Page(?:', '| - )', 'hooks registered but idle until enabled', 'canonicalPropertyKey(rawKey)'],
+  ],
+  [
+    'setup candidate noise filtering',
+    repairSource + fs.readFileSync('src/modules/diagnose.ts', 'utf8'),
+    ['| - |:)', 'isSetupTargetTagNoise', 'isSetupFunctionTagNoise'],
   ],
 ]) {
   for (const text of required) {

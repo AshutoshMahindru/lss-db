@@ -332,7 +332,7 @@ function pageRefsInBlocks(blocks: any[]): string[] {
 function isSetupTargetTagNoise(name: string, props: Record<string, unknown>): boolean {
   const label = safePageName(name);
   if (props['lss-kind'] != null || props[':plugin.property.logseq-lss-db-final-plugin/lss-kind'] != null) return true;
-  if (/^(Entity-Page|DB Tag|Tag Properties|Template|Word Extender|LSS Reports|Area:)/i.test(label)) return true;
+  if (/^(Entity-Page|DB Tag|Tag Properties|Template|Word Extender|LSS Reports|Area)(?:\b| - |:)/i.test(label)) return true;
   if (/Entity Schema Page|Naming Rule|Template Reference|Tag Properties:/i.test(label)) return true;
   return false;
 }
@@ -1281,8 +1281,10 @@ async function repairUpsertPageProperty(
         result.actions.push(`SKIP node property already linked: ${shortKey}`);
         return false;
       }
+      const targets = (((propertySpec(shortKey) as { targets?: unknown[] } | undefined)?.targets ?? [])).map(String);
+      const targetHint = targets.length ? targets.join('/') : 'target';
       result.notes.push(
-        `Node property ${shortKey} could not resolve "${String(value).slice(0, 80)}" to a page id; clear venture in the UI and re-pick ftv from the dropdown.`,
+        `Node property ${shortKey} could not resolve "${String(value).slice(0, 80)}" to a page id; select or link the ${targetHint} page for ${shortKey}.`,
       );
       return false;
     }

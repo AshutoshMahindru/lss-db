@@ -97,7 +97,7 @@ async function readAllPageProperties(pageName: string, pageBlockId: string): Pro
 function isSetupFunctionTagNoise(name: string, props: Record<string, unknown>): boolean {
   const label = visiblePageLabel(name);
   if (getCanonicalProp(props, 'lss-kind') != null) return true;
-  if (/^(Entity-Page|DB Tag|Tag Properties|Template|Word Extender|LSS Reports|Area:)/i.test(label)) return true;
+  if (/^(Entity-Page|DB Tag|Tag Properties|Template|Word Extender|LSS Reports|Area)(?:\b| - |:)/i.test(safePageName(label))) return true;
   if (/Entity Schema Page|Naming Rule|Template Reference|Tag Properties:/i.test(label)) return true;
   return false;
 }

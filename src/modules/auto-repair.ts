@@ -1,4 +1,4 @@
-import { entityIdentity, pageHasClassTag } from '../core/db-properties';
+import { canonicalPropertyKey, entityIdentity, pageHasClassTag } from '../core/db-properties';
 import { blockId, getBlocks, getPage, walkBlocks } from '../core/editor';
 import { formatError, newResult } from '../core/runner';
 import { safePageName, safeTag } from '../core/names';
@@ -10,7 +10,7 @@ const DEBOUNCE_MS = 1800;
 const COOLDOWN_MS = 5000;
 const AUTO_REPAIR_SETTING_KEY = 'autoRepairEnabled';
 const SKIP_PAGE_RE =
-  /^(LSS |LSS$|Template\/|Dashboard\/|Entity-Page\/|Tag Properties\/|Property Reference\/|DB Tag\/|Tag Reference\/|Relationship\/|Area\/)/i;
+  /^(LSS |LSS$|Template(?:\/| - )|Dashboard(?:\/| - )|Entity-Page(?:\/| - )|Tag Properties(?:\/| - )|Property Reference(?:\/| - )|DB Tag(?:\/| - )|Tag Reference(?:\/| - )|Relationship(?:\/| - )|Area(?:\/| - ))/i;
 
 const RELATIONSHIP_PROPERTIES = new Set(relationshipPropertyNames());
 const LSS_OBJECT_TAGS = new Set(allObjects().map((o) => safeTag(o.tag)).filter(Boolean));
@@ -170,9 +170,10 @@ async function pageQualifiesForAutoRepair(pageName: string): Promise<boolean> {
     const props = logseq.Editor.getPageProperties
       ? await logseq.Editor.getPageProperties(pageName).catch(() => null)
       : null;
-    if (props?.['lss-object-type']) return true;
-    for (const prop of RELATIONSHIP_PROPERTIES) {
-      if (props?.[prop] != null && props[prop] !== '') return true;
+    for (const [rawKey, value] of Object.entries(props ?? {})) {
+      const key = canonicalPropertyKey(rawKey);
+      if (key === 'lss-object-type' && value != null && value !== '') return true;
+      if (RELATIONSHIP_PROPERTIES.has(key) && value != null && value !== '') return true;
     }
   } catch {
     /* ignore */
@@ -250,13 +251,12 @@ export async function handleGraphChange(
 }
 
 export function registerAutoRepairHooks(): void {
-  if (!isAutoRepairEnabled()) {
-    console.info('[LSS] auto-repair disabled by plugin setting; manual repair commands remain available.');
-    return;
-  }
   if (!logseq.DB?.onChanged) {
     console.warn('[LSS] logseq.DB.onChanged unavailable; auto-repair hooks not registered.');
     return;
+  }
+  if (!isAutoRepairEnabled()) {
+    console.info('[LSS] auto-repair disabled by plugin setting; hooks registered but idle until enabled.');
   }
 
   logseq.DB.onChanged(({ blocks, txData }) => {

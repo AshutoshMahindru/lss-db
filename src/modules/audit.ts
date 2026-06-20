@@ -1,15 +1,18 @@
 import { MODE } from '../config';
 import {
   appendManagedBlock,
+  blockId,
   currentPageName,
   ensurePage,
   flattenBlockText,
   getBlocks,
+  getPage,
 } from '../core/editor';
+import { canonicalPropertyKey } from '../core/db-properties';
 import { escapeRegExp, safePageName, safeTag, tsKey } from '../core/names';
 import type { AuditFinding, Result } from '../core/types';
 import { allObjects, allTags, registry } from '../registry';
-import { isQueryLikeContent, relationshipPropertyNames, sectionNameFromLine, tagsRequiringConfidentiality } from './queries';
+import { findAllQueryBlocksInSectionAsync, relationshipPropertyNames, sectionNameFromLine, tagsRequiringConfidentiality } from './queries';
 import { stepVerify } from './setup';
 
 function propertyValue(text: string, property: string): string | null {
@@ -70,7 +73,7 @@ function auditPlainTextRelationships(text: string, pageName: string): AuditFindi
   for (const prop of relationshipPropertyNames()) {
     const value = propertyValue(text, prop);
     if (!value) continue;
-    if (!value.includes('[[') && !value.includes('#') && !/^https?:/i.test(value) && value.trim()) {
+    if (!value.includes('[[') && !value.includes('#') && !/^https?:/i.test(value) && !/^\d+$/.test(value.trim()) && value.trim()) {
       findings.push({
         ruleId: 'LSS-AUD-005-node-properties-use-node-references',
         severity: 'ERROR',
@@ -80,6 +83,42 @@ function auditPlainTextRelationships(text: string, pageName: string): AuditFindi
     }
   }
   return findings;
+}
+
+function formatAuditPropertyValue(value: unknown): string {
+  if (value == null) return '';
+  if (Array.isArray(value)) return value.map(formatAuditPropertyValue).filter(Boolean).join(', ');
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const name = String(record.originalName ?? record.name ?? record.title ?? '').trim();
+    if (name) return `[[${safePageName(name)}]]`;
+    const id = record.id ?? record.uuid;
+    return id != null ? String(id) : '';
+  }
+  return String(value).trim();
+}
+
+async function readPagePropertyText(pageName: string): Promise<string> {
+  const page = await getPage(pageName);
+  const pageBlockId = blockId(page);
+  const props = new Map<string, string>();
+  const assign = (source: Record<string, unknown> | null | undefined) => {
+    if (!source) return;
+    for (const [rawKey, rawValue] of Object.entries(source)) {
+      const key = canonicalPropertyKey(rawKey);
+      if (!key || key === 'tags' || key.startsWith('block/')) continue;
+      const value = formatAuditPropertyValue(rawValue);
+      if (value) props.set(key, value);
+    }
+  };
+  assign((page as Record<string, unknown> | null)?.properties as Record<string, unknown> | undefined);
+  if (logseq.Editor.getPageProperties) {
+    assign((await logseq.Editor.getPageProperties(pageName).catch(() => null)) ?? undefined);
+  }
+  if (pageBlockId && logseq.Editor.getBlockProperties) {
+    assign((await logseq.Editor.getBlockProperties(pageBlockId).catch(() => null)) ?? undefined);
+  }
+  return [...props.entries()].map(([key, value]) => `${key}:: ${value}`).join('\n');
 }
 
 function auditConfidentiality(text: string, pageName: string): AuditFinding[] {
@@ -127,15 +166,14 @@ function auditNamespacedPage(pageName: string): AuditFinding[] {
   return findings;
 }
 
-function auditDashboardSections(blocks: any[], pageName: string): AuditFinding[] {
+async function auditDashboardSections(blocks: any[], pageName: string): Promise<AuditFinding[]> {
   const findings: AuditFinding[] = [];
   const stack = [...blocks];
   while (stack.length) {
     const block = stack.shift();
     const section = sectionNameFromLine(block?.content);
     if (section) {
-      const children = block?.children ?? [];
-      const hasQuery = children.some((child: any) => isQueryLikeContent(child?.content));
+      const hasQuery = (await findAllQueryBlocksInSectionAsync(block)).length > 0;
       if (!hasQuery) {
         findings.push({
           ruleId: 'LSS-AUD-010-dashboard-query-backed-sections',
@@ -188,13 +226,14 @@ export async function auditCurrentPage(r: Result): Promise<void> {
     return;
   }
   const blocks = await getBlocks(page);
-  const text = flattenBlockText(blocks);
+  const propText = await readPagePropertyText(page);
+  const text = [flattenBlockText(blocks), propText].filter(Boolean).join('\n');
   const findings: AuditFinding[] = [
     ...auditNamespacedPage(page),
     ...auditRequiredProperties(text, page),
     ...auditPlainTextRelationships(text, page),
     ...auditConfidentiality(text, page),
-    ...auditDashboardSections(blocks, page),
+    ...(await auditDashboardSections(blocks, page)),
   ];
 
   const report = formatAuditReport(page, findings);
