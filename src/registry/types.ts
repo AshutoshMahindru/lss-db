@@ -4,6 +4,9 @@ export interface RegistryArea {
   tag?: string;
   icon?: string;
   description?: string;
+  displayName?: string;
+  aliases?: string[];
+  modelGroup?: string;
 }
 
 /**
@@ -22,6 +25,10 @@ export interface RegistryObject {
   name: string;
   tag: string;
   schemaPage: string;
+  displayName?: string;
+  aliases?: string[];
+  description?: string;
+  modelGroup?: string;
   area?: string;
   nodeKind?: string;
   extends?: string[];
@@ -91,7 +98,16 @@ export interface RegistryTemplate {
 export interface LssRegistry {
   schemaVersion: string;
   areas?: RegistryArea[];
-  baseTags?: Array<{ name?: string; tag?: string; extends?: string[]; properties?: string[] }>;
+  baseTags?: Array<{
+    name?: string;
+    tag?: string;
+    extends?: string[];
+    properties?: string[];
+    displayName?: string;
+    aliases?: string[];
+    description?: string;
+    modelGroup?: string;
+  }>;
   entityTypes?: RegistryObject[];
   formTypes?: RegistryObject[];
   wordExtenderTypes?: RegistryObject[];

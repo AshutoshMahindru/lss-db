@@ -252,6 +252,141 @@
         "review-output",
         "next-actions"
       ]
+    },
+    {
+      "tag": "family-relation/parent",
+      "description": "Context tag for a Person who is a parent in the Family area.",
+      "modelGroup": "Contextual Tags / Family Relation"
+    },
+    {
+      "tag": "family-relation/child",
+      "description": "Context tag for a Person who is a child in the Family area.",
+      "modelGroup": "Contextual Tags / Family Relation"
+    },
+    {
+      "tag": "family-relation/sibling",
+      "description": "Context tag for a Person who is a sibling in the Family area.",
+      "modelGroup": "Contextual Tags / Family Relation"
+    },
+    {
+      "tag": "family-relation/partner",
+      "description": "Context tag for a Person who is a partner in the Family area.",
+      "modelGroup": "Contextual Tags / Family Relation"
+    },
+    {
+      "tag": "family-relation/extended-family",
+      "description": "Context tag for an extended-family Person.",
+      "modelGroup": "Contextual Tags / Family Relation"
+    },
+    {
+      "tag": "family-relation/household",
+      "description": "Context tag for a Person in the household context.",
+      "modelGroup": "Contextual Tags / Family Relation"
+    },
+    {
+      "tag": "closeness/inner-circle",
+      "description": "Context tag for the closest personal relationships.",
+      "modelGroup": "Contextual Tags / Closeness"
+    },
+    {
+      "tag": "closeness/close",
+      "description": "Context tag for close relationships.",
+      "modelGroup": "Contextual Tags / Closeness"
+    },
+    {
+      "tag": "closeness/regular",
+      "description": "Context tag for regular relationships.",
+      "modelGroup": "Contextual Tags / Closeness"
+    },
+    {
+      "tag": "closeness/acquaintance",
+      "description": "Context tag for acquaintance-level relationships.",
+      "modelGroup": "Contextual Tags / Closeness"
+    },
+    {
+      "tag": "closeness/dormant",
+      "description": "Context tag for dormant relationships.",
+      "modelGroup": "Contextual Tags / Closeness"
+    },
+    {
+      "tag": "org-role/founder",
+      "description": "Context tag for a Person or Organisation founder role.",
+      "modelGroup": "Contextual Tags / Organisation Role"
+    },
+    {
+      "tag": "org-role/owner",
+      "description": "Context tag for an owner role.",
+      "modelGroup": "Contextual Tags / Organisation Role"
+    },
+    {
+      "tag": "org-role/employee",
+      "description": "Context tag for an employee role.",
+      "modelGroup": "Contextual Tags / Organisation Role"
+    },
+    {
+      "tag": "org-role/contractor",
+      "description": "Context tag for a contractor role.",
+      "modelGroup": "Contextual Tags / Organisation Role"
+    },
+    {
+      "tag": "org-role/advisor",
+      "description": "Context tag for an advisor role.",
+      "modelGroup": "Contextual Tags / Organisation Role"
+    },
+    {
+      "tag": "org-role/investor",
+      "description": "Context tag for an investor role.",
+      "modelGroup": "Contextual Tags / Organisation Role"
+    },
+    {
+      "tag": "org-role/customer",
+      "description": "Context tag for a customer role.",
+      "modelGroup": "Contextual Tags / Organisation Role"
+    },
+    {
+      "tag": "org-role/vendor",
+      "description": "Context tag for a vendor role.",
+      "modelGroup": "Contextual Tags / Organisation Role"
+    },
+    {
+      "tag": "org-role/regulator",
+      "description": "Context tag for a regulator role.",
+      "modelGroup": "Contextual Tags / Organisation Role"
+    },
+    {
+      "tag": "org-role/partner",
+      "description": "Context tag for a partner role.",
+      "modelGroup": "Contextual Tags / Organisation Role"
+    },
+    {
+      "tag": "confidential/public",
+      "description": "Context tag for public material; structured value is confidentiality:: public.",
+      "modelGroup": "Contextual Tags / Confidentiality"
+    },
+    {
+      "tag": "confidential/internal",
+      "description": "Context tag for internal material; structured value is confidentiality:: internal.",
+      "modelGroup": "Contextual Tags / Confidentiality"
+    },
+    {
+      "tag": "confidential/private",
+      "description": "Context tag for private material; structured value is confidentiality:: private.",
+      "modelGroup": "Contextual Tags / Confidentiality"
+    },
+    {
+      "tag": "confidential/financial",
+      "description": "Context tag for financial material; structured value is confidentiality:: financial.",
+      "modelGroup": "Contextual Tags / Confidentiality"
+    },
+    {
+      "tag": "confidential/legal",
+      "description": "Context tag for legal material; structured value is confidentiality:: legal.",
+      "modelGroup": "Contextual Tags / Confidentiality"
+    },
+    {
+      "tag": "confidential/medical",
+      "description": "Context tag for medical material; structured value is confidentiality:: medical.",
+      "modelGroup": "Contextual Tags / Confidentiality"
     }
   ],
   "entityTypes": [
@@ -473,6 +608,13 @@
     },
     {
       "name": "FinancialAsset",
+      "displayName": "Asset",
+      "aliases": [
+        "Asset",
+        "Wealth Asset"
+      ],
+      "description": "Wealth asset such as a security, holding, investment, or other financial asset. Canonical name remains FinancialAsset to avoid Logseq built-in Asset conflicts.",
+      "modelGroup": "Area/Wealth",
       "schemaPage": "Entity-Page/FinancialAsset",
       "tag": "FinancialAsset",
       "area": "Area/Wealth",
@@ -810,6 +952,8 @@
     },
     {
       "name": "Person",
+      "description": "Individual human used across Family, Friends, Work, and other areas through contextual tags and relationship properties.",
+      "modelGroup": "Cross-Cutting Entities",
       "schemaPage": "Entity-Page/Person",
       "tag": "Person",
       "area": "Area/Cross-Cutting",
@@ -837,6 +981,8 @@
     },
     {
       "name": "Organisation",
+      "description": "Company, institution, regulator, vendor, partner, or other organisation used across areas.",
+      "modelGroup": "Cross-Cutting Entities",
       "schemaPage": "Entity-Page/Organisation",
       "tag": "Organisation",
       "area": "Area/Cross-Cutting",
@@ -861,6 +1007,8 @@
     },
     {
       "name": "Document",
+      "description": "Contracts, decks, filings, policies, notes, and other documents used across Wealth, Work, Learning, and personal areas.",
+      "modelGroup": "Cross-Cutting Entities",
       "schemaPage": "Entity-Page/Document",
       "tag": "Document",
       "area": "Area/Cross-Cutting",
@@ -889,6 +1037,8 @@
     },
     {
       "name": "File",
+      "description": "Stored file or external file reference; extended cross-cutting artifact.",
+      "modelGroup": "Cross-Cutting Artifacts",
       "schemaPage": "Entity-Page/File",
       "tag": "File",
       "area": "Area/Cross-Cutting",
@@ -915,6 +1065,8 @@
     },
     {
       "name": "Notebook",
+      "description": "Curated thematic collection of notes or linked graph material.",
+      "modelGroup": "Cross-Cutting Entities",
       "schemaPage": "Entity-Page/Notebook",
       "tag": "Notebook",
       "area": "Area/Cross-Cutting",
@@ -938,6 +1090,8 @@
     },
     {
       "name": "Output",
+      "description": "Produced artifact or deliverable used across areas.",
+      "modelGroup": "Cross-Cutting Artifacts",
       "schemaPage": "Entity-Page/Output",
       "tag": "Output",
       "area": "Area/Cross-Cutting",
@@ -967,6 +1121,8 @@
     },
     {
       "name": "Report",
+      "description": "Report artifact, often derived from documents, outputs, projects, or reviews.",
+      "modelGroup": "Cross-Cutting Artifacts",
       "schemaPage": "Entity-Page/Report",
       "tag": "Report",
       "area": "Area/Cross-Cutting",
@@ -994,6 +1150,8 @@
     },
     {
       "name": "Proposal",
+      "description": "Proposal artifact, primarily work-oriented but reusable as a cross-cutting output.",
+      "modelGroup": "Cross-Cutting Artifacts",
       "schemaPage": "Entity-Page/Proposal",
       "tag": "Proposal",
       "area": "Area/Work",
@@ -1021,6 +1179,8 @@
     },
     {
       "name": "Presentation",
+      "description": "Presentation or deck artifact used across work, learning, and wealth contexts.",
+      "modelGroup": "Cross-Cutting Artifacts",
       "schemaPage": "Entity-Page/Presentation",
       "tag": "Presentation",
       "area": "Area/Cross-Cutting",
@@ -1049,6 +1209,8 @@
     },
     {
       "name": "SOP",
+      "description": "Standard operating procedure or repeatable process artifact.",
+      "modelGroup": "Cross-Cutting Artifacts",
       "schemaPage": "Entity-Page/SOP",
       "tag": "SOP",
       "area": "Area/Cross-Cutting",
@@ -1075,6 +1237,8 @@
     },
     {
       "name": "Essay",
+      "description": "Learning or thought-development artifact.",
+      "modelGroup": "Cross-Cutting Artifacts",
       "schemaPage": "Entity-Page/Essay",
       "tag": "Essay",
       "area": "Area/Learning",
@@ -1101,6 +1265,8 @@
     },
     {
       "name": "ResearchBrief",
+      "description": "Research summary or brief used across learning, work, and decision contexts.",
+      "modelGroup": "Cross-Cutting Artifacts",
       "schemaPage": "Entity-Page/ResearchBrief",
       "tag": "ResearchBrief",
       "area": "Area/Learning",
@@ -1275,6 +1441,13 @@
     },
     {
       "name": "WorkStreamUpdate",
+      "displayName": "Work-Stream",
+      "aliases": [
+        "Work-Stream",
+        "Work Stream Form"
+      ],
+      "description": "Form record for a dated WorkStream update. Canonical name remains WorkStreamUpdate to distinguish it from the WorkStream entity.",
+      "modelGroup": "Forms",
       "schemaPage": "Form/Work-Stream-Update",
       "tag": "WorkStreamUpdate",
       "area": "Area/Work",
@@ -4548,17 +4721,24 @@
     },
     {
       "name": "family-relation",
-      "type": "text",
+      "type": "choice",
       "cardinality": "one",
       "targets": [],
       "bidirectional": false,
       "inverseTitle": null,
-      "choices": [],
+      "choices": [
+        "parent",
+        "child",
+        "sibling",
+        "partner",
+        "extended-family",
+        "household"
+      ],
       "default": null,
       "aliases": [],
       "sensitivity": "normal",
       "uiPosition": null,
-      "description": "Text field: family-relation.",
+      "description": "Family relationship context. Mirrors #family-relation/* contextual tags.",
       "audit": {
         "requiredValueRule": "LSS-AUD-004-required-property-values",
         "nodeReferenceRule": null,
@@ -4567,17 +4747,23 @@
     },
     {
       "name": "closeness",
-      "type": "text",
+      "type": "choice",
       "cardinality": "one",
       "targets": [],
       "bidirectional": false,
       "inverseTitle": null,
-      "choices": [],
+      "choices": [
+        "inner-circle",
+        "close",
+        "regular",
+        "acquaintance",
+        "dormant"
+      ],
       "default": null,
       "aliases": [],
       "sensitivity": "normal",
       "uiPosition": null,
-      "description": "Text field: closeness.",
+      "description": "Relationship closeness context. Mirrors #closeness/* contextual tags.",
       "audit": {
         "requiredValueRule": "LSS-AUD-004-required-property-values",
         "nodeReferenceRule": null,

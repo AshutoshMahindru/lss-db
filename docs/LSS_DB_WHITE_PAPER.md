@@ -82,6 +82,201 @@ LSS has four major surfaces:
 3. Schema/control surface: generated schema, template, tag, relationship, and command pages.
 4. Dashboard surface: query-backed views over typed entities.
 
+## Canonical Area Model
+
+The generated `LSS Area Model` page renders the high-level ontology as a navigable graph map. It keeps canonical registry names stable while exposing user-facing aliases where the operating language differs from the stored schema.
+
+### Areas
+
+```text
+Area/Health
+Area/Wealth
+Area/Learning
+Area/Family
+Area/Friends
+Area/Work
+Area/Pursuits
+Area/Cross-Cutting
+```
+
+### Entities by Area
+
+#### 🏥 Health
+
+```text
+Entity-Page/Regime     — Health related action system
+Entity-Page/Diet       — Dietary protocol
+Entity-Page/Exercise   — Physical workout
+Entity-Page/Condition  — Diagnosed health condition
+Entity-Page/Therapy    — Ongoing therapy
+Entity-Page/Treatment  — Treatment course
+Entity-Page/Medicine   — Specific medication
+```
+
+#### 🪙 Wealth
+
+```text
+Entity-Page/Account
+Entity-Page/FinancialAsset — displayed as Asset; canonical name remains FinancialAsset
+```
+
+`FinancialAsset` is intentionally not renamed to `Asset` because Logseq has built-in and common usage around asset-like concepts. LSS keeps the canonical tag/page stable and exposes `Asset` as a display alias.
+
+#### 📚 Learning
+
+```text
+Entity-Page/Subject   — Knowledge domain
+Entity-Page/Course    — Structured learning program
+Entity-Page/Lesson    — Discrete learning session
+Entity-Page/Concept   — Specific idea within a subject
+Entity-Page/Skill     — Capability being built
+Entity-Page/Ability   — Capacity or developed ability
+```
+
+#### 🏠 Family
+
+Family does not introduce a separate entity class in this pass. It uses cross-cutting `Person`, `Document`, `Interaction`, `Event`, `Commitment`, `Note`, and related forms with contextual tags and matching properties:
+
+```text
+#family-relation/parent
+#family-relation/child
+#family-relation/sibling
+#family-relation/partner
+#family-relation/extended-family
+#family-relation/household
+
+family-relation:: parent / child / sibling / partner / extended-family / household
+```
+
+#### 👥 Friends
+
+Friends also uses cross-cutting `Person` and forms. Closeness is modeled both as contextual tags and as a structured page property:
+
+```text
+#closeness/inner-circle
+#closeness/close
+#closeness/regular
+#closeness/acquaintance
+#closeness/dormant
+
+closeness:: inner-circle / close / regular / acquaintance / dormant
+```
+
+#### 💼 Work
+
+```text
+Entity-Page/Venture      — Business you own/run
+Entity-Page/Function     — Business function
+Entity-Page/Project      — Bounded effort
+Entity-Page/Work-Stream  — WorkStream, canonical registry name WorkStream
+```
+
+Work roles are contextual tags plus structured relationship fields:
+
+```text
+#org-role/founder
+#org-role/owner
+#org-role/employee
+#org-role/contractor
+#org-role/advisor
+#org-role/investor
+#org-role/customer
+#org-role/vendor
+#org-role/regulator
+#org-role/partner
+
+role::
+relationship-context::
+```
+
+#### 🧭 Pursuits
+
+```text
+Entity-Page/Pursuit
+```
+
+#### 🌐 Cross-Cutting Entities and Artifacts
+
+Core cross-cutting entities:
+
+```text
+Entity-Page/Person        — Individual human
+Entity-Page/Document      — Contracts, decks, filings, policies
+Entity-Page/Notebook      — Curated thematic collection of notes
+Entity-Page/Organisation  — Companies, institutions, regulators, etc.
+```
+
+Extended cross-cutting artifact types already present in the registry:
+
+```text
+Entity-Page/File
+Entity-Page/Output
+Entity-Page/Report
+Entity-Page/Proposal
+Entity-Page/Presentation
+Entity-Page/SOP
+Entity-Page/Essay
+Entity-Page/ResearchBrief
+```
+
+Confidentiality can be used across Wealth, Work, Health, and personal records:
+
+```text
+#confidential/public
+#confidential/internal
+#confidential/private
+#confidential/financial
+#confidential/legal
+#confidential/medical
+
+confidentiality:: public / internal / private / financial / legal / medical
+```
+
+### Forms
+
+Forms are capture and event records. They can be block-first or page-materialized depending on use:
+
+```text
+Form/Interaction
+Form/Question
+Form/Insight
+Form/Idea
+Form/Decision
+Form/Work-Stream        — display alias for canonical WorkStreamUpdate
+Form/Action-Item
+Form/Note
+```
+
+The registry also includes review and date-oriented forms:
+
+```text
+Form/Review
+Form/Daily-Review
+Form/Weekly-Review
+Form/Monthly-Review
+Form/Important-Date
+Form/Commitment
+Form/Event
+```
+
+### Word Extenders
+
+Word extenders support vocabulary, naming, shorthand, prompt reuse, and query reuse:
+
+```text
+Word Extender/Term
+Word Extender/Phrase
+Word Extender/Prompt Fragment
+Word Extender/Abbreviation
+Word Extender/Naming Rule
+Word Extender/Style Rule
+Word Extender/Alias
+Word Extender/Domain Vocabulary
+Word Extender/Query Snippet
+```
+
+The area hierarchy seeds `DomainVocabulary` pages, object types seed `NamingRule` pages, common property names seed `Abbreviation` pages, and dashboard views seed `QuerySnippet` pages.
+
 ## Tags, Properties, and Metadata
 
 ### Class Tags
@@ -941,4 +1136,3 @@ Dashboards query.
 ```
 
 This separation prevents journal pollution, preserves flexible graph relationships, and allows the same entity or event to appear naturally from multiple perspectives without forcing everything into a hierarchy.
-

@@ -104,7 +104,7 @@ export function objectContract(o: RegistryObject, kind: string): string {
     `dashboard-section:: ${o.dashboardSection ?? '-'}`,
     `required-properties:: ${(o.requiredProperties ?? []).join(', ') || '-'}`,
     '',
-    'Properties (SOLE SOURCE for instances of this tag; templates provide layout only):',
+    'Canonical page properties (materialized on entity/form/word pages; templates provide layout only):',
     ...(o.properties ?? []).map((p) => `- ${p}`),
     '',
     'Relationships:',
@@ -120,10 +120,14 @@ export function objectContract(o: RegistryObject, kind: string): string {
 export function tagContract(tag: string): string {
   const matches = allObjects().filter((o) => safeTag(o.tag) === tag);
   const base = (registry.baseTags ?? []).find((b) => safeTag(b.name ?? b.tag ?? '') === tag);
+  const baseDescription = base?.description ? `description:: ${base.description}` : null;
+  const baseGroup = base?.modelGroup ? `model-group:: ${base.modelGroup}` : null;
   return [
     contractHeader(MODE === 'db' ? 'DB Tag' : 'Tag Reference', tag, `${MODE === 'db' ? 'DB Tag' : 'Tag Reference'}/${tag}`),
     `tag:: #${tag}`,
     `native-db-tag:: ${MODE === 'db' ? 'yes' : 'no'}`,
+    ...(baseDescription ? [baseDescription] : []),
+    ...(baseGroup ? [baseGroup] : []),
     `extends:: ${
       matches
         .flatMap((o) => o.extends ?? [])
@@ -132,6 +136,11 @@ export function tagContract(tag: string): string {
       (base?.extends ?? []).join(', ') ||
       '-'
     }`,
+    '',
+    'Usage policy:',
+    '- Class tags identify what a page/block is.',
+    '- Contextual tags add browsing/filtering context.',
+    '- LSS entity schema fields are materialized as page properties, not native tag properties.',
     '',
     'Used by:',
     ...(matches.length
@@ -152,7 +161,8 @@ export function tagPropertiesContract(tag: string): string {
       `${MODE === 'db' ? 'Tag Properties' : 'Property Reference'}/${tag}`,
     ),
     `tag:: #${tag}`,
-    `native-db-tag-properties:: ${MODE === 'db' ? 'best-effort in command 10' : 'not applicable in Markdown graph'}`,
+    `native-db-tag-properties:: documentation-only`,
+    `native-db-binding:: disabled for LSS instance schema`,
     '',
     'Property fields:',
     ...([...props].length
@@ -163,6 +173,11 @@ export function tagPropertiesContract(tag: string): string {
           return `- ${p} (${typ}${sens})`;
         })
       : ['- No direct properties registered']),
+    '',
+    'Native tag property policy:',
+    '- These fields document the canonical page properties for matching entities/forms/word extenders.',
+    '- They are not bound to the native Logseq tag, because native tag properties render on every tagged block.',
+    '- Run lss: 11setup-db-native-config to remove LSS entity schema properties from native tags.',
     '',
     'Relationship fields:',
     ...(rels.length

@@ -58,7 +58,7 @@ export const COMMAND_HELP: CommandHelpLine[] = [
   { id: '43', label: 'lss: 43generate-weekly-review', description: 'Create a Weekly Review page.' },
   { id: '44', label: 'lss: 44expand-abbreviation', description: 'Insert common LSS property expansion at cursor.' },
   { id: '45', label: 'lss: 45help', description: 'Create/open the command guide.' },
-  { id: '46', label: 'lss: 46create-simple-page-tree-page', description: 'Create/update LSS Page Tree - Simple with plain current page names.' },
+  { id: '46', label: 'lss: 46create-simple-page-tree-page', description: 'Create/update LSS Page Tree - Simple and LSS Area Model navigation pages.' },
   { id: '47', label: 'lss: 47create-command-list-page', description: 'Create/update LSS Command List with the active command surface.' },
   { id: '48', label: 'lss: 48create-layer-home-pages', description: 'Create/update one home page per LSS layer with backlinks to all pages in that layer.' },
   { id: '49', label: 'lss: 49add-layer-links-to-home', description: 'Add backlinks to all LSS layer home pages on [[Home]].' },
@@ -160,7 +160,7 @@ export function layerHomeDefinitions(): LayerHome[] {
     id: 'reports-and-guides',
     home: 'LSS Layer Home - Reports and Guides',
     title: 'Reports and guides',
-    pages: ['LSS Reports', 'LSS Page Tree', 'LSS Page Tree - Simple', 'LSS Command List', 'LSS Help - Commands'],
+    pages: ['LSS Reports', 'LSS Page Tree', 'LSS Page Tree - Simple', 'LSS Area Model', 'LSS Command List', 'LSS Help - Commands'],
   });
   return groups.map((g) => ({ ...g, pages: uniqueSortedPages(g.pages) }));
 }
@@ -236,12 +236,173 @@ export function simplePageTreeText(): string {
   node('LSS Native Templates', 1);
   node('LSS Command List', 1);
   node('LSS Page Tree - Simple', 1);
+  node('LSS Area Model', 1);
+  return lines.join('\n');
+}
+
+type ModelItem = {
+  name: string;
+  displayName?: string;
+  aliases?: string[];
+  schemaPage: string;
+  tag: string;
+  description?: string;
+  area?: string;
+};
+
+function objectDisplayName(item: ModelItem): string {
+  return String(item.displayName || item.name || item.tag);
+}
+
+function modelLink(item: ModelItem): string {
+  const display = objectDisplayName(item);
+  const alias = item.displayName && item.displayName !== item.name ? ` (canonical: ${item.name})` : '';
+  const desc = item.description ? ` — ${item.description}` : '';
+  return `${safeRef(item.schemaPage)} — ${display}${alias}; tag #${item.tag}${desc}`;
+}
+
+function findObject(name: string): ModelItem | null {
+  return (
+    [...(registry.entityTypes ?? []), ...(registry.formTypes ?? []), ...(registry.wordExtenderTypes ?? [])].find(
+      (item) => item.name === name,
+    ) ?? null
+  );
+}
+
+function modelItems(names: string[]): string[] {
+  return names.map(findObject).filter(Boolean).map((item) => `  - ${modelLink(item as ModelItem)}`);
+}
+
+function contextTagLines(prefix: string): string[] {
+  return (registry.baseTags ?? [])
+    .map((tag) => String(tag.tag ?? tag.name ?? ''))
+    .filter((tag) => tag.startsWith(`${prefix}/`))
+    .map((tag) => `  - #${tag}`);
+}
+
+export function areaModelText(): string {
+  const entityByArea: Array<{ title: string; area: string; names: string[]; note?: string }> = [
+    {
+      title: '🏥 Health',
+      area: 'Area/Health',
+      names: ['Regime', 'Diet', 'Exercise', 'Condition', 'Therapy', 'Treatment', 'Medicine'],
+    },
+    {
+      title: '🪙 Wealth',
+      area: 'Area/Wealth',
+      names: ['Account', 'FinancialAsset'],
+      note: 'Display alias: Asset is represented by canonical FinancialAsset to avoid Logseq built-in Asset conflicts.',
+    },
+    {
+      title: '📚 Learning',
+      area: 'Area/Learning',
+      names: ['Subject', 'Course', 'Lesson', 'Concept', 'Skill', 'Ability'],
+    },
+    {
+      title: '🏠 Family',
+      area: 'Area/Family',
+      names: [],
+      note: 'Family uses cross-cutting Person plus family-relation/* context tags and family-relation page property.',
+    },
+    {
+      title: '👥 Friends',
+      area: 'Area/Friends',
+      names: [],
+      note: 'Friends uses cross-cutting Person plus closeness/* context tags and closeness page property.',
+    },
+    {
+      title: '💼 Work',
+      area: 'Area/Work',
+      names: ['Venture', 'Function', 'Project', 'WorkStream'],
+    },
+    {
+      title: '🧭 Pursuits',
+      area: 'Area/Pursuits',
+      names: ['Pursuit'],
+    },
+  ];
+
+  const crossCutting = [
+    'Person',
+    'Document',
+    'Notebook',
+    'Organisation',
+    'File',
+    'Output',
+    'Report',
+    'Proposal',
+    'Presentation',
+    'SOP',
+    'Essay',
+    'ResearchBrief',
+  ];
+  const formNames = ['Interaction', 'Question', 'Insight', 'Idea', 'Decision', 'WorkStreamUpdate', 'ActionItem', 'Note'];
+  const wordNames = (registry.wordExtenderTypes ?? []).map((item) => item.name);
+
+  const lines: string[] = [
+    'LSS Area Model',
+    `lss-generated-by:: lss: 46create-simple-page-tree-page`,
+    `lss-plugin-mode:: ${MODE}`,
+    `lss-plugin-version:: ${VERSION}`,
+    '',
+    'Model rules:',
+    '- Class tags identify what a page is.',
+    '- Contextual tags add browsing/filtering context and must not carry native tag schema properties.',
+    '- Page properties are the structured query source for relationships and state.',
+    '- Templates are layout/query scaffolds; word extenders support vocabulary, naming, abbreviations, and query snippets.',
+    '',
+    'Areas:',
+    ...(registry.areas ?? []).map((area) => `- ${area.icon ? `${area.icon} ` : ''}${safeRef(area.page)} — ${area.description ?? area.name}`),
+    '',
+    'Entities by area:',
+  ];
+
+  for (const group of entityByArea) {
+    lines.push(`- ${group.title} ${safeRef(group.area)}`);
+    if (group.note) lines.push(`  - ${group.note}`);
+    const items = modelItems(group.names);
+    lines.push(...(items.length ? items : ['  - Uses cross-cutting entities and contextual tags; no dedicated entity type in this pass.']));
+  }
+
+  lines.push(
+    '- 🌐 Cross-Cutting Entities',
+    ...modelItems(crossCutting),
+    '',
+    'Forms:',
+    ...modelItems(formNames),
+    '  - Display alias: Form/Work-Stream maps to canonical WorkStreamUpdate.',
+    '',
+    'Contextual tag families:',
+    '- family-relation/* with matching property family-relation',
+    ...contextTagLines('family-relation'),
+    '- closeness/* with matching property closeness',
+    ...contextTagLines('closeness'),
+    '- org-role/* with matching properties role and relationship-context',
+    ...contextTagLines('org-role'),
+    '- confidential/* with matching property confidentiality',
+    ...contextTagLines('confidential'),
+    '',
+    'Word Extenders:',
+    ...modelItems(wordNames),
+    '',
+    'Templates:',
+    ...(registry.templates ?? []).map((template) => `- ${safeRef(template.name)} — applies to ${(template.appliesTo ?? []).join(', ') || 'n/a'}`),
+    '',
+    'DB Tags:',
+    ...allTags().map((tag) => `- ${safeRef(`DB Tag/${tag}`)} — #${tag}`),
+    '',
+    'Tag Property Contract Pages:',
+    ...allTags().map((tag) => `- ${safeRef(`Tag Properties/${tag}`)} — documentation only; native tag properties are not LSS instance schema`),
+  );
+
   return lines.join('\n');
 }
 
 export async function createSimplePageTreePage(r: Result): Promise<void> {
   await ensurePage(r, 'LSS Page Tree - Simple');
   await appendManagedBlock(r, 'LSS Page Tree - Simple', `${MODE}-simple-page-tree-v${VERSION}`, simplePageTreeText());
+  await ensurePage(r, 'LSS Area Model');
+  await appendManagedBlock(r, 'LSS Area Model', `${MODE}-area-model-v${VERSION}`, areaModelText());
 }
 
 export async function createCommandListPage(r: Result): Promise<void> {
@@ -278,7 +439,7 @@ export async function createHelpPage(r: Result): Promise<void> {
     '- Commands 14-22 create placeholder pages. Rename them after review.',
     '- Commands 23-32 insert blocks at the active cursor. Run them from an empty block.',
     '- Commands 33-44 update, audit, export, or snapshot existing pages.',
-    '- Commands 46-49 create navigation, command-list, and layer-home pages.',
+    '- Commands 46-49 create navigation, area-model, command-list, and layer-home pages.',
     '- Command 50 repairs the current page (promote properties/tags, fix dashboard queries).',
     '- Commands intentionally use flat-safe scaffold page names to avoid namespace parent errors.',
     '- Spec aliases such as `LSS: Initialize Schema` map to the same handlers as numbered commands.',

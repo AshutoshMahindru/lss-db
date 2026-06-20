@@ -1,6 +1,8 @@
 import fs from 'fs';
 
 const registry = JSON.parse(fs.readFileSync('src/registry/data.json', 'utf8'));
+const navigationSource = fs.readFileSync('src/modules/navigation.ts', 'utf8');
+const setupSource = fs.readFileSync('src/modules/setup.ts', 'utf8');
 
 function fail(message) {
   throw new Error(message);
@@ -60,6 +62,40 @@ requireIncludes(
   ],
 );
 
+requireIncludes(
+  'contextual baseTags',
+  (registry.baseTags ?? []).map((tag) => tag.tag ?? tag.name),
+  [
+    'family-relation/parent',
+    'family-relation/child',
+    'family-relation/sibling',
+    'family-relation/partner',
+    'family-relation/extended-family',
+    'family-relation/household',
+    'closeness/inner-circle',
+    'closeness/close',
+    'closeness/regular',
+    'closeness/acquaintance',
+    'closeness/dormant',
+    'org-role/founder',
+    'org-role/owner',
+    'org-role/employee',
+    'org-role/contractor',
+    'org-role/advisor',
+    'org-role/investor',
+    'org-role/customer',
+    'org-role/vendor',
+    'org-role/regulator',
+    'org-role/partner',
+    'confidential/public',
+    'confidential/internal',
+    'confidential/private',
+    'confidential/financial',
+    'confidential/legal',
+    'confidential/medical',
+  ],
+);
+
 const allObjects = [...entityTypes, ...formTypes, ...wordExtenderTypes];
 for (const object of allObjects) {
   for (const field of ['name', 'tag', 'schemaPage', 'nodeKind', 'requiredProperties', 'properties']) {
@@ -78,6 +114,39 @@ if ((registry.decisions ?? {}).nativeTaskMode !== true) {
 }
 if (allObjects.some((object) => object.tag === 'Asset' || object.name === 'Asset')) {
   fail('registry must not define LSS #Asset; use #FinancialAsset');
+}
+
+const financialAsset = entityTypes.find((object) => object.name === 'FinancialAsset');
+if (financialAsset?.displayName !== 'Asset' || !(financialAsset.aliases ?? []).includes('Asset')) {
+  fail('FinancialAsset must expose Asset as display alias without changing canonical name');
+}
+const workStreamUpdate = formTypes.find((object) => object.name === 'WorkStreamUpdate');
+if (workStreamUpdate?.displayName !== 'Work-Stream' || !(workStreamUpdate.aliases ?? []).includes('Work-Stream')) {
+  fail('WorkStreamUpdate must expose Form/Work-Stream display alias');
+}
+const familyRelation = (registry.propertyRegistry ?? []).find((prop) => prop.name === 'family-relation');
+if (familyRelation?.type !== 'choice' || !(familyRelation.choices ?? []).includes('parent')) {
+  fail('family-relation must be a choice property matching contextual tags');
+}
+const closeness = (registry.propertyRegistry ?? []).find((prop) => prop.name === 'closeness');
+if (closeness?.type !== 'choice' || !(closeness.choices ?? []).includes('inner-circle')) {
+  fail('closeness must be a choice property matching contextual tags');
+}
+for (const required of [
+  'LSS Area Model',
+  'Area/Health',
+  'FinancialAsset',
+  'WorkStreamUpdate',
+  'family-relation/*',
+  'closeness/*',
+  'org-role/*',
+  'confidential/*',
+  'Word Extenders:',
+]) {
+  if (!navigationSource.includes(required)) fail(`navigation area model missing: ${required}`);
+}
+if (/\.addTagProperty\s*\(/.test(setupSource)) {
+  fail('setup must not add LSS entity schema properties to native tags');
 }
 
 console.log(

@@ -99,6 +99,8 @@ lss: 48create-layer-home-pages
 lss: 49add-layer-links-to-home
 ```
 
+`lss: 46create-simple-page-tree-page` also creates `LSS Area Model`, a generated navigation page that renders the Area → Entity/Form/Word Extender model, contextual tag families, templates, DB tags, and tag-property contract pages.
+
 ## Spec aliases (examples)
 
 - `LSS: Initialize Schema` → `lss: 1setup-all`

@@ -81,7 +81,9 @@ export function dashboardPageForObjectType(objectType: string): string | null {
 
 export function rootPages(): string[] {
   const roots = new Set<string>(registry.rootPages ?? []);
-  for (const p of ['LSS Reports', 'LSS Page Tree', 'LSS Native Templates', 'LSS Command List']) roots.add(p);
+  for (const p of ['LSS Reports', 'LSS Page Tree', 'LSS Area Model', 'LSS Native Templates', 'LSS Command List']) {
+    roots.add(p);
+  }
   return [...roots];
 }
 
