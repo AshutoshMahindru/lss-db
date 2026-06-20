@@ -7,14 +7,13 @@ export interface RegistryArea {
 }
 
 /**
- * RegistryObject (selected via #tag or lss-object-type on instances) is the
- * **sole source of truth** for an object's canonical properties
- * (requiredProperties + properties union).
+ * RegistryObject (selected via #tag or lss-object-type on instances) defines
+ * an object's canonical properties (requiredProperties + properties union).
  *
  * Tags act as the primary class/type on DB graphs (e.g. (tags "Function")).
  * The plugin uses objectByName + uniqueObjectProps(obj) everywhere to derive
- * the property schema. Creation, repair, and template enrichment all source
- * properties exclusively from here.
+ * the property schema. Creation, repair, and template enrichment materialize
+ * these properties onto entity pages, not native tag property lists.
  *
  * Do NOT duplicate "prop::" declarations into template bodies; body is for
  * layout/requiredSections + dashboard query sections only.
@@ -72,10 +71,10 @@ export interface ViewDefinition {
  * RegistryTemplate describes the structural skeleton (title + requiredSections
  * + any dashboard sub-section headings) for native DB templates.
  *
- * IMPORTANT: As of the "tag is sole schema source" rule, RegistryTemplate.body
- * MUST NOT contain property declarations (foo:: bar). Bodies are layout only.
- * Canonical properties are always injected at runtime from the matching
- * RegistryObject (via appliesTo tag).
+ * IMPORTANT: RegistryTemplate.body MUST NOT contain property declarations
+ * (foo:: bar). Bodies are layout only. Canonical properties are injected at
+ * runtime onto entity pages from the matching RegistryObject; native tag
+ * properties are not the instance schema source.
  */
 export interface RegistryTemplate {
   name: string;

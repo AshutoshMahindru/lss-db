@@ -13,7 +13,7 @@ src/
     contracts.ts         schema contract text generators
     setup.ts             commands 1-13
     create.ts            commands 14-32 plus lss:52 Function page creation
-    queries.ts           dashboard/advanced query builders (tag-based class match + hardcoded id for current page binding on DB)
+    queries.ts           dashboard/advanced query builders (DB advanced query blocks with Logseq DSL payloads)
     repair.ts            materialize journal entity blocks, promote page tags/properties, dashboard query repair
     audit.ts             structured page audit (ERROR/WARNING/INFO) using RegistryObject required props
     migration.ts         dry-run normalize, relationship conversion, and namespaced migration plans
@@ -34,7 +34,7 @@ src/
 
 ## Key v2.0 fixes
 
-1. DB dashboard queries use native advanced-query blocks, DB tag clauses, current-page DB ids where available, and current Logseq DB property filters.
+1. DB dashboard queries use native advanced-query blocks with Logseq DSL payloads, class tag filters, and current-page relationship property filters.
 2. Multi-tag and multi-property dashboard views use `or` semantics, so sections like Outputs and People do not require every possible tag/property at once.
 3. `lss: 38normalize-properties`, `lss: 39convert-text-relationships`, and `lss: 40migrate-namespaced-objects` now write dry-run plans to `LSS Migrations` instead of mutating content immediately.
 4. `lss: 50repair-current-page` materializes LSS entity-tagged journal blocks into entity pages, ensures page-root properties from the RegistryObject tag, and repairs dashboard queries.
@@ -45,9 +45,13 @@ src/
 - Migration-style commands are dry-run by default and produce review-required reports.
 - The graph remains the source of truth; the plugin assists with setup, repair, audit, migration planning, and export.
 
-## Property schema source of truth (tag / RegistryObject)
+## White paper
 
-**RegistryObject (via its `tag`) is the single source of canonical properties for all entities, forms, and word extenders.**
+The detailed operating model is documented in [docs/LSS_DB_WHITE_PAPER.md](docs/LSS_DB_WHITE_PAPER.md). It covers the typed graph model, page-property policy, meta tag properties, journal materialization, dashboard queries, setup commands, and worked examples.
+
+## Property schema source of truth (RegistryObject / entity page)
+
+**RegistryObject defines canonical properties, and entity pages are where those properties are materialized.**
 
 - `requiredProperties` + `properties` on an object type in `src/registry/data.json` define the schema.
 - Creation (`new-venture`, `new-function`, etc.), repair (`lss:50`), and native template installation all call `uniqueObjectProps(obj)` and `defaultPropertyValue(...)` sourced **only** from the matching RegistryObject.
@@ -56,9 +60,10 @@ src/
   - The root title line
   - Structural section headings (for requiredSections + dashboard query insertion)
 - Any `foo::` lines that used to live inside template bodies have been stripped. The data.json `decisions` record this rule explicitly (`tagIsSolePropertySchemaSource`, `templateBodyIsLayoutAndSectionsOnly`).
-- Old instances get the full set of properties ensured on next repair.
+- Native Logseq tag properties are not used for LSS entity schema fields. Setup removes entity schema properties from native tags so tagging a journal block does not display schema fields on the journal page.
+- Old instances get the full set of properties ensured on next repair, and polluted journal capture blocks can be materialized and cleaned by `lss:50`.
 
-Rationale: avoids duplication, makes the tag the classifier+schema carrier (matching how Logseq DB tags work), and keeps templates as pure "layout + query" scaffolds.
+Rationale: avoids duplication, keeps tags as class labels, keeps templates as pure "layout + query" scaffolds, and prevents native tag properties from appearing on journal capture blocks.
 
 ## Recommended setup sequence
 
@@ -106,7 +111,7 @@ lss: 49add-layer-links-to-home
 
 ## Template note
 
-Templates are layout-only (sections + #Query children). `Apply template to tags` is disabled for DB entity templates so tagging a journal block does not make that journal block the entity. Properties are injected onto the entity page root from the RegistryObject that matches the `appliesTo` tag.
+Templates are layout-only (sections + query children). `Apply template to tags` is disabled for DB entity templates so tagging a journal block does not make that journal block the entity. Properties are injected onto the entity page root from the RegistryObject that matches the `appliesTo` tag.
 
 For template setup, open `LSS Native Templates`, create an empty block, click inside it, and run `lss: 8setup-templates`. Re-run to remove old tag-applied template settings and re-sync missing structure/query children. If an entity was tagged on a journal page, run `lss: 50repair-current-page` on that journal; it will create/update the entity page and replace the journal tag block with a page link.
 

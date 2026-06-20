@@ -718,8 +718,8 @@ async function gatherPageRepairState(
     }
   }
 
-  // Harvest inline #LSSClass tags (e.g. title "FTV #Venture") so repair promotes via addBlockTag
-  // (required for DB (tags "Venture") queries and to trigger property ensure from tag as sole source).
+  // Harvest inline #LSSClass tags (e.g. title "FTV #Venture") so repair promotes via addBlockTag.
+  // Class tags drive DB (tags "Venture") queries; RegistryObject props are materialized on the page root.
   for (const t of harvestInlineLssClassTags(blocks)) {
     tags.add(t);
   }
@@ -862,7 +862,7 @@ async function repairPageCore(
   }
 
   // Hoist schemaProps + propLines (for clean skipping + list visibility ensure).
-  // Tag is sole source; list is derived for visibility on the entity page root only.
+  // RegistryObject defines the schema; the list is derived for visibility on the entity page root only.
   const schemaProps = new Set<string>();
   if (inferredType) {
     const obj = objectByName(inferredType);

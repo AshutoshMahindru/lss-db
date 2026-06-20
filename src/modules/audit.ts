@@ -29,7 +29,7 @@ function isEmptyPropertyValue(value: string | null): boolean {
 }
 
 function detectObjects(text: string) {
-  // Primary match is the class #tag (sole schema carrier). lss-object-type is fallback.
+  // Primary match is the class #tag. lss-object-type is a compatibility fallback.
   const detected = allObjects().filter((o) => {
     const tagHit = text.includes(`#${safeTag(o.tag)}`);
     const typeHit = text.includes(`lss-object-type:: ${o.name}`);
@@ -39,8 +39,8 @@ function detectObjects(text: string) {
 }
 
 function auditRequiredProperties(text: string, pageName: string): AuditFinding[] {
-  // Audit uses RegistryObject.requiredProperties (sourced from tag / object).
-  // This is consistent with the rule that RegistryObject (via #tag) is sole schema.
+  // Audit uses RegistryObject.requiredProperties. Entity pages materialize those properties;
+  // native Logseq tag properties are intentionally not the LSS instance schema source.
   const findings: AuditFinding[] = [];
   for (const obj of detectObjects(text)) {
     for (const prop of obj.requiredProperties ?? []) {
