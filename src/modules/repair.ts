@@ -25,6 +25,7 @@ import {
   ensurePage,
   getBlocks,
   getPage,
+  pageVisibleName,
   resolvePageFromIdentity,
   resolveVisibleNodeToken,
   updateBlockContent,
@@ -230,14 +231,13 @@ function relationshipValueReferencesPage(value: unknown, pageName: string, pageI
       const record = item as Record<string, unknown>;
       const id = record.id ?? record.dbId ?? record[':db/id'];
       if (id != null && pageId != null && String(id) === String(pageId)) return true;
-      const name = String(record.name ?? record.originalName ?? record.title ?? '').trim();
+      const name = pageVisibleName(record);
       return name ? pageNamesEquivalent(name, pageName) : false;
     }
     const raw = String(item).trim();
     if (!raw) return false;
     if (/^\d+$/.test(raw) && pageId != null) return raw === String(pageId);
-    const wiki = raw.match(/^\[\[([^\]]+)\]\]$/);
-    return pageNamesEquivalent(wiki?.[1] ?? raw, pageName);
+    return pageNamesEquivalent(visiblePageLabel(raw), pageName);
   };
   return Array.isArray(value) ? value.some(test) : test(value);
 }
@@ -312,9 +312,7 @@ function relationshipRefText(value: string): string {
 }
 
 function visibleRelationshipName(page: Record<string, unknown> | null | undefined, fallback: string): string {
-  const label = visiblePageLabel(
-    String(page?.originalName ?? page?.name ?? page?.title ?? '').trim(),
-  );
+  const label = pageVisibleName(page, fallback);
   const fallbackLabel = visiblePageLabel(fallback);
   if (!label || looksLikeUuid(label)) return fallbackLabel;
   return label;
@@ -378,7 +376,7 @@ async function candidateRefsFromTaggedPages(targetType: string): Promise<string[
   const refs: string[] = [];
   for (const item of objects ?? []) {
     const record = item as Record<string, unknown>;
-    const label = String(record.originalName ?? record.name ?? record.title ?? '').trim();
+    const label = pageVisibleName(record);
     const page =
       (label ? await getPage(label) : null) ||
       (record.id != null ? await resolvePageFromIdentity(record.id as string | number) : null) ||
@@ -449,7 +447,7 @@ function pageRecordIsJournal(page: any, pageName: string): boolean {
   if (type === 'journal') return true;
   if (page.journal === true || page['journal?'] === true || page[':block/journal?'] === true) return true;
   if (page.journalDay != null || page['journal-day'] != null || page[':block/journal-day'] != null) return true;
-  const name = String(pageName ?? page.name ?? page.originalName ?? page.title ?? '').trim();
+  const name = pageVisibleName(page, pageName);
   return /^\d{4}[-_/]\d{2}[-_/]\d{2}$/.test(name);
 }
 
@@ -457,7 +455,7 @@ function tagNameFromObject(tag: unknown): string | null {
   if (typeof tag === 'string') return safeTag(tag);
   if (tag && typeof tag === 'object') {
     const record = tag as Record<string, unknown>;
-    const name = record.name ?? record.originalName ?? record.title ?? record.ident;
+    const name = pageVisibleName(record) || record.ident;
     if (name) return safeTag(String(name));
   }
   return null;
@@ -638,8 +636,8 @@ function normalizePropertyValueForCompare(value: unknown): string {
     const record = value as Record<string, unknown>;
     if (record.id != null) return `id:${record.id}`;
     if (record.uuid != null) return `uuid:${record.uuid}`;
-    const name = record.name ?? record.originalName ?? record.title;
-    if (name) return `name:${String(name).trim().toLowerCase()}`;
+    const name = pageVisibleName(record);
+    if (name) return `name:${name.trim().toLowerCase()}`;
   }
   return String(value).trim().toLowerCase();
 }
@@ -751,7 +749,7 @@ async function dbPropertyValueToRepairString(
   if (typeof value === 'object') {
     const record = value as Record<string, unknown>;
     if (isDateProperty(shortKey)) {
-      const label = String(record.name ?? record.originalName ?? record.title ?? '').trim();
+      const label = pageVisibleName(record);
       const fromLabel = label ? formatDatePropertyValue(parseDatePropertyValue(label) ?? parseDatePropertyValue(`[[${label}]]`)) : '';
       const fromObject =
         fromLabel ||
@@ -759,8 +757,8 @@ async function dbPropertyValueToRepairString(
         formatDatePropertyValue(record[':logseq.property/created-at']);
       if (fromObject) return fromObject;
     }
-    const name = record.name ?? record.originalName ?? record.content ?? record.title;
-    if (name) return `[[${safePageName(String(name))}]]`;
+    const name = pageVisibleName(record);
+    if (name) return `[[${safePageName(name)}]]`;
     const id = record.id ?? record.uuid;
     if (id) {
       const resolved = await resolveVisibleNodeToken(result, String(id));
@@ -842,8 +840,8 @@ async function readDbPageTags(result: Result, pageBlockId: string, page: any): P
             continue;
           }
           const record = tag as Record<string, unknown>;
-          const name = record.name ?? record.originalName ?? record.content ?? record.title;
-          if (name) tags.add(safeTag(String(name)));
+          const name = pageVisibleName(record);
+          if (name) tags.add(safeTag(name));
         }
       } else if (blockTags) {
         for (const tag of repairTagsFromValue(String(blockTags))) tags.add(tag);
@@ -1294,14 +1292,10 @@ async function repairUpsertPageProperty(
       }
     }
     if (isNodeRel && typeof upsertValue === 'string') {
-      if (isDbPageRefValue(currentValue)) {
-        result.actions.push(`SKIP node property already linked: ${shortKey}`);
-        return false;
-      }
       const targets = (((propertySpec(shortKey) as { targets?: unknown[] } | undefined)?.targets ?? [])).map(String);
       const targetHint = targets.length ? targets.join('/') : 'target';
       result.notes.push(
-        `Node property ${shortKey} could not resolve "${String(value).slice(0, 80)}" to a page id; select or link the ${targetHint} page for ${shortKey}.`,
+        `Node property ${shortKey} could not resolve "${String(value).slice(0, 80)}" to a page id; select or link the ${targetHint} page for ${shortKey}. Existing value: ${JSON.stringify(currentValue)}`,
       );
       return false;
     }
@@ -1589,13 +1583,8 @@ async function repairSpecificPage(
     result.errors.push(`Repair ${label}: could not read page ${pageName}`);
     return 0;
   }
-  const visibleName = page?.originalName ?? page?.name ?? page?.title ?? pageName;
-  if (
-    visibleName &&
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(visibleName))
-  ) {
-    pageName = String(visibleName);
-  }
+  const visibleName = pageVisibleName(page, pageName);
+  if (visibleName) pageName = visibleName;
   const pageBlockId = blockId(page);
   if (!pageBlockId) {
     result.errors.push(`Repair ${label}: page has no uuid/id exposed by Logseq API: ${pageName}`);
@@ -1687,6 +1676,6 @@ export async function repairCurrentPage(result: Result): Promise<void> {
     result.errors.push(`Could not read current page object: ${current}`);
     return;
   }
-  const pageName = String(page.originalName ?? page.name ?? page.title ?? current);
+  const pageName = pageVisibleName(page, current) || current;
   await repairSpecificPage(result, pageName, null, 'current page');
 }

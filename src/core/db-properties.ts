@@ -1,6 +1,6 @@
 import { PLUGIN_ID } from '../config';
-import { getPage } from './editor';
-import { safePageName } from './names';
+import { getPage, resolvePageFromIdentity } from './editor';
+import { entityVisibleLabel, safePageName, visiblePageLabel } from './names';
 import { formatError } from './runner';
 import { propertySpec } from '../registry';
 
@@ -121,7 +121,7 @@ export function parseDatePropertyValue(value: unknown): number | null {
   }
   if (typeof value === 'object') {
     const record = value as Record<string, unknown>;
-    const label = String(record.name ?? record.originalName ?? record.title ?? '').trim();
+    const label = entityVisibleLabel(record);
     if (label) {
       const fromLabel = parseDateFromRawString(label) ?? parseDateFromRawString(`[[${label}]]`);
       if (fromLabel != null) return fromLabel;
@@ -387,14 +387,16 @@ export async function ensureLssObjectTypeProperty(): Promise<void> {
 
 function pageNamesFromValue(value: string): string[] {
   const refs: string[] = [];
+  const raw = String(value ?? '').trim();
+  const whole = visiblePageLabel(raw);
+  if (whole && whole !== raw && !whole.includes('[[') && !whole.includes(']]')) return [whole];
   const re = /\[\[([^\]]+)\]\]/g;
   let match: RegExpExecArray | null;
-  while ((match = re.exec(String(value ?? '')))) {
-    if (match[1]) refs.push(match[1].trim());
+  while ((match = re.exec(raw))) {
+    if (match[1]) refs.push(visiblePageLabel(match[1]).trim());
   }
   if (!refs.length) {
-    const raw = String(value ?? '').trim();
-    if (raw) refs.push(...raw.split(',').map((x) => x.trim()).filter(Boolean));
+    if (raw) refs.push(...raw.split(',').map((x) => visiblePageLabel(x.trim())).filter(Boolean));
   }
   return refs;
 }
@@ -405,7 +407,8 @@ export async function resolveNodePropertyIds(value: string): Promise<Array<strin
     const page =
       (await getPage(name)) ||
       (await getPage(safePageName(name))) ||
-      (await getPage(name.toLowerCase()));
+      (await getPage(name.toLowerCase())) ||
+      (await resolvePageFromIdentity(name).catch(() => null));
     const id = (page as Record<string, unknown> | null)?.id;
     if (id != null) ids.push(id as string | number);
   }

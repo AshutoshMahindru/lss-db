@@ -16,6 +16,7 @@ import {
   ensurePage,
   getBlocks,
   getPage,
+  pageVisibleName,
   resolvePageFromIdentity,
   walkBlocks,
 } from '../core/editor';
@@ -136,7 +137,7 @@ function ventureItemIsPageRef(item: unknown, venturePageName: string, venturePag
     const record = item as Record<string, unknown>;
     const id = record.id;
     if (id != null && venturePageId != null && String(id) === String(venturePageId)) return true;
-    const name = String(record.name ?? record.originalName ?? record.title ?? '').trim();
+    const name = pageVisibleName(record);
     return name ? ventureNamesMatch(name, venturePageName) : false;
   }
   const raw = String(item).trim();
@@ -173,10 +174,10 @@ async function resolveVenturePageFromValue(...values: unknown[]): Promise<Record
       if (id != null) {
         const byId =
           (await resolvePageFromIdentity(id as string | number)) ||
-          (await tryName(String(record.name ?? record.originalName ?? record.title ?? '')));
+          (await tryName(pageVisibleName(record)));
         if (byId) return byId as Record<string, unknown>;
       }
-      const name = String(record.name ?? record.originalName ?? record.title ?? '').trim();
+      const name = pageVisibleName(record);
       return name ? await tryName(name) : null;
     }
     const raw = String(item).trim();
@@ -352,7 +353,7 @@ async function resolveQueryHitLabel(item: unknown): Promise<string> {
   if (!identity) return 'unknown';
   if (identity.kind === 'name') {
     const page = await getPage(identity.value) || (await getPage(identity.value.toLowerCase()));
-    if (page) return String(page.originalName ?? page.name ?? page.title ?? identity.value);
+    if (page) return pageVisibleName(page, identity.value) || identity.value;
     return identity.value;
   }
   if (identity.kind === 'uuid') {
@@ -374,7 +375,7 @@ async function resolveQueryHitLabel(item: unknown): Promise<string> {
     return identity.value;
   }
   const page = await resolvePageFromIdentity(identity.value);
-  if (page) return String(page.originalName ?? page.name ?? page.title ?? `entity-id:${identity.value}`);
+  if (page) return pageVisibleName(page, `entity-id:${identity.value}`) || `entity-id:${identity.value}`;
   if (logseq.Editor.getBlock) {
     const block = await logseq.Editor.getBlock(identity.value).catch(() => null);
     if (block) {
@@ -790,7 +791,7 @@ export async function diagnoseCurrentPage(r: Result): Promise<void> {
     return;
   }
 
-  const visibleName = String(page.originalName ?? page.name ?? page.title ?? pageName);
+  const visibleName = pageVisibleName(page, pageName) || pageName;
   const pageBlockId = blockId(page);
   if (!pageBlockId) {
     r.errors.push(`Page has no uuid/id: ${visibleName}`);
@@ -1028,7 +1029,7 @@ export async function diagnoseCurrentPage(r: Result): Promise<void> {
     lines.push(`venture-property:: ${formatValue(venture)}`);
     if (rawVenture !== venture) lines.push(`venture-visible-property:: ${formatValue(rawVenture)}`);
     lines.push(
-      `venture-resolves-to-page:: ${venturePage ? String(venturePage.originalName ?? venturePage.name ?? 'yes') : 'no'}`,
+      `venture-resolves-to-page:: ${venturePage ? pageVisibleName(venturePage, 'yes') || 'yes' : 'no'}`,
     );
     lines.push(`venture-is-page-ref:: ${ventureIsRef ? 'yes' : 'no'}`);
     if (!typeOk) lines.push('- FIX: add page property lss-object-type = Function');
@@ -1042,7 +1043,7 @@ export async function diagnoseCurrentPage(r: Result): Promise<void> {
       );
       if (venturePage) {
         lines.push(
-          `- NOTE: name "${formatValue(venture)}" matches page [[${venturePage.originalName ?? venturePage.name}]] but queries require a numeric page id like area uses [465]`,
+          `- NOTE: name "${formatValue(venture)}" matches page [[${pageVisibleName(venturePage, 'yes') || 'yes'}]] but queries require a numeric page id like area uses [465]`,
         );
       }
     }

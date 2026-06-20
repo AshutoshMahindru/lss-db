@@ -1,7 +1,7 @@
 import { MODE, THROTTLE_MS, VERSION } from '../config';
 import { isLogseqBuiltinTag } from './builtin-tags';
 import { pageForCanonical } from '../registry';
-import { safePageName, safeTag } from './names';
+import { entityVisibleLabel, safePageName, safeTag } from './names';
 import type { Result } from './types';
 import { formatError, sleep } from './runner';
 
@@ -206,7 +206,7 @@ export function flattenBlockText(blocks: any[]): string {
 export async function currentPageName(): Promise<string | null> {
   try {
     const p = await logseq.Editor.getCurrentPage();
-    return p?.originalName ?? p?.name ?? p?.title ?? null;
+    return pageVisibleName(p) || null;
   } catch {
     return null;
   }
@@ -271,7 +271,7 @@ export async function resolveVisibleNodeToken(result: Result, token: string): Pr
     return raw;
   }
   const node = await resolvePageFromIdentity(raw);
-  const visible = pageVisibleName(node) || String(node?.content ?? '').trim();
+  const visible = pageVisibleName(node);
   if (visible) {
     const resolved = safePageName(visible);
     result.actions.push(`RESOLVE visible node token: ${raw} -> ${resolved}`);
@@ -281,6 +281,6 @@ export async function resolveVisibleNodeToken(result: Result, token: string): Pr
   return raw;
 }
 
-export function pageVisibleName(page: any): string {
-  return String(page?.originalName ?? page?.name ?? page?.title ?? page?.content ?? '').trim();
+export function pageVisibleName(page: any, fallback = ''): string {
+  return entityVisibleLabel((page as Record<string, unknown> | null) ?? null, fallback);
 }

@@ -29,6 +29,37 @@ function looksLikeDbPageEntityId(raw: string): boolean {
   return /^\d+$/.test(raw) && Number(raw) < 1e9;
 }
 
+function visibleEntityCandidate(value: unknown): string {
+  const raw = visiblePageLabel(String(value ?? '').trim());
+  if (!raw || looksLikeUuid(raw) || looksLikeDbPageEntityId(raw)) return '';
+  return raw;
+}
+
+export function entityVisibleLabel(
+  entity: Record<string, unknown> | null | undefined,
+  fallback = '',
+): string {
+  if (!entity) return visibleEntityCandidate(fallback);
+  for (const value of [
+    entity.originalName,
+    entity[':block/original-name'],
+    entity['block/original-name'],
+    entity.title,
+    entity.fullTitle,
+    entity[':block/title'],
+    entity['block/title'],
+    entity.content,
+    entity.name,
+    entity[':block/name'],
+    entity['block/name'],
+    fallback,
+  ]) {
+    const label = visibleEntityCandidate(value);
+    if (label) return label;
+  }
+  return '';
+}
+
 /** DB venture filters should use numeric page ids (like area:: [465]), not wiki-link casing. */
 export function queryPageRef(
   pageName: string,
@@ -36,7 +67,7 @@ export function queryPageRef(
 ): string {
   const pageId = (page as Record<string, unknown> | null)?.id;
   if (pageId != null && looksLikeDbPageEntityId(String(pageId))) return String(pageId);
-  const fromPage = page?.originalName ?? page?.name;
+  const fromPage = entityVisibleLabel(page as Record<string, unknown> | null, pageName);
   const raw = normalizePageRefName(String(fromPage ?? pageName ?? ''));
   return raw ? `[[${raw}]]` : '[[]]';
 }
@@ -48,10 +79,7 @@ export function looksLikeUuid(value: string): boolean {
 }
 
 export function tagObjectLabel(entity: Record<string, unknown> | null | undefined): string {
-  if (!entity) return '';
-  return visiblePageLabel(
-    String(entity.originalName ?? entity.name ?? entity.title ?? entity.fullTitle ?? entity.content ?? ''),
-  );
+  return entityVisibleLabel(entity);
 }
 
 export function visiblePageLabel(name: string): string {

@@ -7,6 +7,8 @@ import {
   getBlocks,
   getPage,
   insertAtCursor,
+  pageVisibleName,
+  resolvePageFromIdentity,
   walkBlocks,
 } from '../core/editor';
 import { scheduleAutoRepair } from './auto-repair';
@@ -27,7 +29,7 @@ import {
   propertySpec,
   registry,
 } from '../registry';
-import { safePageName, safeTag, todayRef, tsKey } from '../core/names';
+import { safePageName, safeTag, todayRef, tsKey, visiblePageLabel } from '../core/names';
 import type { Result } from '../core/types';
 import type { RegistryObject } from '../registry/types';
 
@@ -105,14 +107,20 @@ async function propertyValueToCreateRef(value: unknown): Promise<string> {
   }
   if (typeof value === 'object') {
     const record = value as Record<string, unknown>;
-    const name = String(record.originalName ?? record.name ?? record.title ?? '').trim();
+    const name = pageVisibleName(record);
     if (name) return `[[${safePageName(name)}]]`;
     const id = record.id ?? record.uuid;
-    return id != null ? String(id) : '';
+    if (id != null) {
+      const page = await resolvePageFromIdentity(id as string | number).catch(() => null);
+      const label = pageVisibleName(page);
+      return label ? `[[${safePageName(label)}]]` : String(id);
+    }
+    return '';
   }
-  const raw = String(value).trim();
+  const input = String(value).trim();
+  const raw = visiblePageLabel(input);
   if (!raw) return '';
-  if (raw.startsWith('[[')) return raw;
+  if (input.startsWith('[[') || raw !== input) return `[[${safePageName(raw)}]]`;
   if (/^\d+$/.test(raw) && Number(raw) < 1e9) return raw;
   return raw;
 }
@@ -169,7 +177,8 @@ async function currentPageContextForCreate(): Promise<{
   if (!current) return null;
   const page = await getPage(current);
   if (!page) return null;
-  const visibleName = String(page.originalName ?? page.name ?? page.title ?? current).trim();
+  const visibleName = pageVisibleName(page, current);
+  if (!visibleName) return null;
   const pageBlockId = blockId(page);
   const props = await readCurrentContextProps(visibleName, pageBlockId);
   let objectType = String(props.get('lss-object-type') ?? '').trim() || null;
@@ -182,7 +191,7 @@ async function currentPageContextForCreate(): Promise<{
     }
   }
   if (!objectType) objectType = inferObjectTypeFromSections(await getBlocks(visibleName));
-  return visibleName ? { objectType, pageRef: `[[${visibleName}]]`, props } : null;
+  return { objectType, pageRef: `[[${safePageName(visibleName)}]]`, props };
 }
 
 async function defaultCreateOverrides(o: RegistryObject): Promise<Record<string, string>> {

@@ -89,6 +89,44 @@ function visiblePageLabel(name) {
   return raw;
 }
 
+function looksLikeUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    String(value ?? '').trim(),
+  );
+}
+
+function looksLikeDbPageEntityId(raw) {
+  return /^\d+$/.test(String(raw ?? '')) && Number(raw) < 1e9;
+}
+
+function visibleEntityCandidate(value) {
+  const raw = visiblePageLabel(String(value ?? '').trim());
+  if (!raw || looksLikeUuid(raw) || looksLikeDbPageEntityId(raw)) return '';
+  return raw;
+}
+
+function entityVisibleLabel(entity, fallback = '') {
+  if (!entity) return visibleEntityCandidate(fallback);
+  for (const value of [
+    entity.originalName,
+    entity[':block/original-name'],
+    entity['block/original-name'],
+    entity.title,
+    entity.fullTitle,
+    entity[':block/title'],
+    entity['block/title'],
+    entity.content,
+    entity.name,
+    entity[':block/name'],
+    entity['block/name'],
+    fallback,
+  ]) {
+    const label = visibleEntityCandidate(value);
+    if (label) return label;
+  }
+  return '';
+}
+
 function safePageName(name) {
   return String(name ?? '')
     .split('/')
@@ -102,6 +140,22 @@ function safePageName(name) {
 function relationshipRefText(value) {
   const label = safePageName(visiblePageLabel(value));
   return label ? `[[${label}]]` : '';
+}
+
+function pageNamesFromValue(value) {
+  const refs = [];
+  const raw = String(value ?? '').trim();
+  const whole = visiblePageLabel(raw);
+  if (whole && whole !== raw && !whole.includes('[[') && !whole.includes(']]')) return [whole];
+  const re = /\[\[([^\]]+)\]\]/g;
+  let match;
+  while ((match = re.exec(raw))) {
+    if (match[1]) refs.push(visiblePageLabel(match[1]).trim());
+  }
+  if (!refs.length && raw) {
+    refs.push(...raw.split(',').map((x) => visiblePageLabel(x.trim())).filter(Boolean));
+  }
+  return refs;
 }
 
 function safeTag(tag) {
@@ -708,6 +762,20 @@ const tests = [
     }
     if (relationshipRefText('Area/Work') !== '[[Area - Work]]') {
       throw new Error('relationship refs should use safe page names');
+    }
+    if (pageNamesFromValue('[[[[FGPL]]]]').join('|') !== 'FGPL') {
+      throw new Error('node property resolver should parse nested relationship refs');
+    }
+    const dbPage = {
+      name: '6a365a1f-8cb2-42b2-b376-3f89cbca7321',
+      title: 'FGPL',
+      id: 4733,
+    };
+    if (entityVisibleLabel(dbPage) !== 'FGPL') {
+      throw new Error('visible page label should prefer title over UUID-like DB name');
+    }
+    if (entityVisibleLabel({ name: '6a365a1f-8cb2-42b2-b376-3f89cbca7321' }, 'FGPL') !== 'FGPL') {
+      throw new Error('visible page label should fall back when only DB UUID name is present');
     }
   },
   () => {
