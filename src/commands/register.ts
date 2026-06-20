@@ -70,6 +70,10 @@ function registerAlias(alias: string, numberedLabel: string, fn: Handler): void 
   register(alias, fn);
 }
 
+function registerAliases(labels: string[], fn: Handler): void {
+  for (const label of labels) register(label, fn);
+}
+
 export function registerCommands(): void {
   registerAlias('LSS: Initialize Schema', 'lss: 1setup-all', setupAll);
   register('lss: 2setup-bootstrap', step1);
@@ -130,7 +134,16 @@ export function registerCommands(): void {
   register('lss: 50repair-current-page', repairCurrentPage);
   register('lss: 51diagnose-current-page', diagnoseCurrentPage);
   registerAlias('LSS: New Function', 'lss: 52new-function', newFunction);
-  registerAlias('LSS: Reset Venture Property', 'lss: 53reset-venture-property', resetVentureNativeProperty);
+  registerAliases(
+    [
+      'lss: 53reset-venture-property',
+      'lss:53reset-venture-property',
+      'lss53',
+      'lss 53',
+      'LSS: Reset Venture Property',
+    ],
+    resetVentureNativeProperty,
+  );
 
   // Additional spec aliases that map to existing handlers
   register('LSS: Initialize Schema (step-by-step)', maintInitializeSchema);

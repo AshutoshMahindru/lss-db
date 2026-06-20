@@ -65,7 +65,7 @@ export const COMMAND_HELP: CommandHelpLine[] = [
   { id: '50', label: 'lss: 50repair-current-page', description: 'Recovery tool: materialize journal entity blocks, promote page tags/properties, and fix dashboard queries.' },
   { id: '51', label: 'lss: 51diagnose-current-page', description: 'Diagnose current-page DB tag, property, and query state.' },
   { id: '52', label: 'lss: 52new-function', description: 'Create a placeholder Function page.' },
-  { id: '53', label: 'lss: 53reset-venture-property', description: 'Reset stale native venture property schema to a DB node picker targeting #Venture.' },
+  { id: '53', label: 'lss: 53reset-venture-property', description: 'Reset stale native venture property schema to a DB node picker targeting #Venture. Aliases: lss53, lss:53reset-venture-property.' },
 ];
 
 export function commandListBody(): string {

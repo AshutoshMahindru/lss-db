@@ -301,6 +301,76 @@ async function waitForNativePropertyRemoval(name: string): Promise<boolean> {
   return false;
 }
 
+async function nativePropertySnapshot(name: string): Promise<string> {
+  if (!logseq.Editor.getProperty) return `${name}: getProperty unavailable`;
+  const prop = (await logseq.Editor.getProperty(name).catch((error) => ({ error: formatError(error) }))) as
+    | Record<string, unknown>
+    | null;
+  if (!prop) return `${name}: missing`;
+  if (prop.error) return `${name}: getProperty error: ${String(prop.error)}`;
+  const id = prop.id ?? prop[':db/id'] ?? prop['db/id'] ?? '(no id)';
+  const uuid = prop.uuid ?? prop[':block/uuid'] ?? prop['block/uuid'] ?? '(no uuid)';
+  const ident = prop.ident ?? prop[':db/ident'] ?? prop['db/ident'] ?? '(no ident)';
+  const props = (prop.properties as Record<string, unknown> | undefined) ?? {};
+  const blockProps =
+    (prop.uuid || prop.id) && logseq.Editor.getBlockProperties
+      ? ((await logseq.Editor.getBlockProperties((prop.uuid ?? prop.id) as any).catch(() => null)) as
+          | Record<string, unknown>
+          | null)
+      : null;
+  const interesting: Record<string, unknown> = {};
+  for (const source of [prop, props, blockProps ?? {}]) {
+    for (const key of [
+      'type',
+      'cardinality',
+      ':logseq.property/type',
+      'logseq.property/type',
+      ':logseq.property/cardinality',
+      'logseq.property/cardinality',
+      ':logseq.property/node-tags',
+      'logseq.property/node-tags',
+      ':logseq.property/classes',
+      'logseq.property/classes',
+    ]) {
+      if ((source as Record<string, unknown>)[key] != null && interesting[key] == null) {
+        interesting[key] = (source as Record<string, unknown>)[key];
+      }
+    }
+  }
+  return `${name}: id=${String(id)} uuid=${String(uuid)} ident=${String(ident)} fields=${JSON.stringify(interesting)} propKeys=${Object.keys(props).sort().join(',') || '(none)'} blockPropKeys=${Object.keys(blockProps ?? {}).sort().join(',') || '(none)'}`;
+}
+
+async function removeNativePropertyDefinition(name: string, prop: Record<string, unknown>, r: Result): Promise<boolean> {
+  if (!logseq.Editor.removeProperty) return false;
+  const candidates = [
+    name,
+    prop.ident,
+    prop[':db/ident'],
+    prop['db/ident'],
+    prop.uuid,
+    prop[':block/uuid'],
+    prop['block/uuid'],
+    prop.id,
+    prop[':db/id'],
+    prop['db/id'],
+  ]
+    .map((value) => String(value ?? '').trim())
+    .filter(Boolean);
+  const unique = [...new Set(candidates)];
+  let lastError = '';
+  for (const candidate of unique) {
+    try {
+      await logseq.Editor.removeProperty(candidate);
+      if (candidate !== name) r.actions.push(`REMOVE native property definition via identity: ${candidate}`);
+      return true;
+    } catch (error) {
+      lastError = formatError(error);
+    }
+  }
+  r.errors.push(`removeProperty venture failed for ${unique.join(', ')}: ${lastError || 'unknown error'}`);
+  return false;
+}
+
 export async function resetVentureNativeProperty(r: Result): Promise<void> {
   if (MODE !== 'db') {
     r.notes.push('reset-venture-property applies only to DB graphs.');
@@ -310,6 +380,11 @@ export async function resetVentureNativeProperty(r: Result): Promise<void> {
     r.errors.push('removeProperty API unavailable; cannot reset native venture property.');
     return;
   }
+
+  r.notes.push(`Before reset: ${await nativePropertySnapshot('venture')}`);
+  r.notes.push(
+    `Native API availability: removeProperty=${logseq.Editor.removeProperty ? 'yes' : 'no'}, upsertProperty=${logseq.Editor.upsertProperty ? 'yes' : 'no'}, setPropertyNodeTags=${logseq.Editor.setPropertyNodeTags ? 'yes' : 'no'}`,
+  );
 
   const spec = propertySpec('venture');
   if (!spec) {
@@ -331,9 +406,14 @@ export async function resetVentureNativeProperty(r: Result): Promise<void> {
 
   const existing = logseq.Editor.getProperty ? await logseq.Editor.getProperty('venture').catch(() => null) : null;
   if (existing) {
-    await logseq.Editor.removeProperty('venture');
+    const removedCallOk = await removeNativePropertyDefinition('venture', existing as Record<string, unknown>, r);
+    if (!removedCallOk) {
+      r.notes.push(`After failed remove: ${await nativePropertySnapshot('venture')}`);
+      return;
+    }
     r.actions.push('REMOVE native property definition: venture');
     const removed = await waitForNativePropertyRemoval('venture');
+    r.notes.push(`After remove wait: ${await nativePropertySnapshot('venture')}`);
     if (!removed) {
       r.errors.push('Native property venture still exists after removeProperty; reload Logseq and rerun lss:53.');
       return;
@@ -343,6 +423,7 @@ export async function resetVentureNativeProperty(r: Result): Promise<void> {
   }
 
   const ensured = await ensureNativeProperty(spec);
+  r.notes.push(`After recreate: ${await nativePropertySnapshot('venture')}`);
   if (ensured?.created) {
     r.actions.push(`RECREATE native property: venture${ensured.note ? ` (${ensured.note})` : ''}`);
   } else if (ensured?.skipped) {
