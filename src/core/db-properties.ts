@@ -64,8 +64,12 @@ export function isDateProperty(property: string): boolean {
 }
 
 function parseDateFromRawString(raw: string): number | null {
-  const text = String(raw ?? '').trim();
+  const text = visiblePageLabel(String(raw ?? '').trim());
   if (!text || /^\[\[\s*\]\]$/.test(text)) return null;
+  if (/^today$/i.test(text)) {
+    const d = new Date();
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12, 0, 0, 0);
+  }
 
   const wiki = text.match(/\[\[(\d{4}-\d{2}-\d{2})\]\]/);
   if (wiki?.[1]) {
@@ -75,6 +79,17 @@ function parseDateFromRawString(raw: string): number | null {
   if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
     const ms = Date.parse(`${text}T12:00:00.000Z`);
     return Number.isNaN(ms) ? null : ms;
+  }
+  const journalTitle = text.match(/^([A-Za-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th),\s*(\d{4})$/);
+  if (journalTitle) {
+    const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+    const month = monthNames.indexOf(journalTitle[1].slice(0, 3).toLowerCase());
+    const day = Number(journalTitle[2]);
+    const year = Number(journalTitle[3]);
+    if (month >= 0 && day >= 1 && day <= 31 && year >= 1900 && year <= 2100) {
+      const ms = Date.UTC(year, month, day, 12, 0, 0, 0);
+      return Number.isNaN(ms) ? null : ms;
+    }
   }
   // Recognize Logseq journal-day (YYYYMMDD) as 8-digit int
   if (/^\d{8}$/.test(text)) {
@@ -121,6 +136,15 @@ export function parseDatePropertyValue(value: unknown): number | null {
   }
   if (typeof value === 'object') {
     const record = value as Record<string, unknown>;
+    const journalDay =
+      record.journalDay ??
+      record['journal-day'] ??
+      record[':block/journal-day'] ??
+      record['block/journal-day'];
+    if (typeof journalDay === 'number') {
+      const fromJd = journalDayToMs(journalDay);
+      if (fromJd != null) return fromJd;
+    }
     const label = entityVisibleLabel(record);
     if (label) {
       const fromLabel = parseDateFromRawString(label) ?? parseDateFromRawString(`[[${label}]]`);
@@ -162,6 +186,77 @@ export function formatDatePropertyValueForContent(value: unknown): string {
   const m = String(d.getUTCMonth() + 1).padStart(2, '0');
   const day = String(d.getUTCDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+function journalDayTitle(jd: number): string {
+  const s = String(jd);
+  const year = Number(s.slice(0, 4));
+  const month = Number(s.slice(4, 6));
+  const day = Number(s.slice(6, 8));
+  const monthName = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][month - 1] ?? 'Jan';
+  const suffix = day % 100 >= 11 && day % 100 <= 13 ? 'th' : day % 10 === 1 ? 'st' : day % 10 === 2 ? 'nd' : day % 10 === 3 ? 'rd' : 'th';
+  return `${monthName} ${day}${suffix}, ${year}`;
+}
+
+function numericEntityId(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0 && value < 1e9) return value;
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  for (const key of ['id', ':db/id', 'db/id']) {
+    const raw = record[key];
+    if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0 && raw < 1e9) return raw;
+  }
+  return null;
+}
+
+function recordJournalDay(value: unknown): number | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  for (const key of ['journalDay', 'journal-day', ':block/journal-day', 'block/journal-day']) {
+    const raw = record[key];
+    if (typeof raw === 'number' && journalDayToMs(raw) != null) return raw;
+  }
+  return null;
+}
+
+async function journalPageIdForDay(jd: number): Promise<number | null> {
+  if (!logseq.DB?.datascriptQuery) return null;
+  try {
+    const rows = await logseq.DB.datascriptQuery(
+      `[:find ?p
+ :in $ ?day
+ :where [?p :block/journal-day ?day]]`,
+      jd,
+    );
+    const raw = Array.isArray(rows) ? rows[0]?.[0] : null;
+    return numericEntityId(raw);
+  } catch {
+    return null;
+  }
+}
+
+export async function resolveJournalDatePropertyValue(value: unknown): Promise<number | null> {
+  const directId = numericEntityId(value);
+  if (directId != null && recordJournalDay(value) != null) return directId;
+  const jd = toJournalDay(value);
+  if (jd == null) return null;
+  const existingId = await journalPageIdForDay(jd);
+  if (existingId != null) return existingId;
+
+  const title = journalDayTitle(jd);
+  const page = (await getPage(title)) || (await getPage(title.toLowerCase()));
+  const pageId = numericEntityId(page);
+  if (pageId != null && recordJournalDay(page) === jd) return pageId;
+
+  if (logseq.Editor.createPage) {
+    try {
+      await logseq.Editor.createPage(title, {}, { createFirstBlock: true });
+      return await journalPageIdForDay(jd);
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 export function looksLikePageEntityId(raw: string): boolean {
@@ -351,8 +446,16 @@ export type EnsureNativePropertyResult = {
   note?: string;
 };
 
+export type EnsureNativePropertyOptions = {
+  refreshExistingSchema?: boolean;
+};
+
 function isPropertySchemaConflict(message: string): boolean {
   return /can't be changed|existing data|cannot be changed/i.test(message);
+}
+
+function isDeferredTimeout(message: string): boolean {
+  return /deferred timeout|async call/i.test(message);
 }
 
 export function isPluginPropertyOwnershipError(message: string): boolean {
@@ -363,7 +466,88 @@ function skippedNativeProperty(name: string, note: string): EnsureNativeProperty
   return { name, created: false, skipped: true, note };
 }
 
-export async function ensureNativeProperty(spec: NativePropertySpec): Promise<EnsureNativePropertyResult | null> {
+function shouldRefreshExistingPropertySchema(
+  name: string,
+  spec: NativePropertySpec,
+  options: EnsureNativePropertyOptions = {},
+): boolean {
+  if (options.refreshExistingSchema === false) return false;
+  const key = canonicalPropertyKey(name);
+  const type = String(spec.type ?? '').toLowerCase();
+  // DB node properties are critical picker fields. Older failed setup runs can
+  // leave them as text/default properties, which makes page ids render as raw
+  // numbers and removes filtered dropdowns.
+  return Boolean(key) && type === 'node';
+}
+
+function normalizeSchemaAtom(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return normalizeSchemaAtom(
+      record.name ??
+        record.title ??
+        record.ident ??
+        record[':db/ident'] ??
+        record['db/ident'] ??
+        record.value,
+    );
+  }
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (!raw) return '';
+  const withoutKeyword = raw.replace(/^:/, '');
+  return withoutKeyword.split('/').pop()?.replace(/^:/, '') ?? withoutKeyword;
+}
+
+function schemaFieldFromSources(sources: Array<Record<string, unknown> | null | undefined>, keys: string[]): unknown {
+  for (const source of sources) {
+    if (!source) continue;
+    for (const key of keys) {
+      const value = source[key];
+      if (value != null) return value;
+    }
+  }
+  return undefined;
+}
+
+async function nativePropertyRecordSources(name: string): Promise<Array<Record<string, unknown> | null | undefined>> {
+  if (!logseq.Editor.getProperty) return [];
+  const prop = (await logseq.Editor.getProperty(name).catch(() => null)) as Record<string, unknown> | null;
+  if (!prop) return [];
+  const props = (prop.properties as Record<string, unknown> | undefined) ?? null;
+  const identity = prop.uuid ?? prop.id ?? prop[':block/uuid'] ?? prop['block/uuid'] ?? prop[':db/id'] ?? prop['db/id'];
+  const blockProps =
+    identity != null && logseq.Editor.getBlockProperties
+      ? ((await logseq.Editor.getBlockProperties(identity as any).catch(() => null)) as Record<string, unknown> | null)
+      : null;
+  return [prop, props, blockProps];
+}
+
+export async function nativePropertyResetReasonForSpec(spec: NativePropertySpec): Promise<string | null> {
+  const name = spec.name ?? spec.property ?? spec.key;
+  if (!name || String(spec.type ?? '').toLowerCase() !== 'node') return null;
+  const sources = await nativePropertyRecordSources(name);
+  if (!sources.length) return null;
+  const actualType = normalizeSchemaAtom(
+    schemaFieldFromSources(sources, ['type', ':logseq.property/type', 'logseq.property/type']),
+  );
+  const expectedType = normalizeSchemaAtom(nativePropertySchema(spec).type);
+  if (actualType && actualType !== expectedType) return `expected type ${expectedType}, found ${actualType}`;
+
+  const actualCardinality = normalizeSchemaAtom(
+    schemaFieldFromSources(sources, ['cardinality', ':logseq.property/cardinality', 'logseq.property/cardinality']),
+  );
+  const expectedCardinality = normalizeSchemaAtom(nativePropertySchema(spec).cardinality);
+  if (actualCardinality && actualCardinality !== expectedCardinality) {
+    return `expected cardinality ${expectedCardinality}, found ${actualCardinality}`;
+  }
+  return null;
+}
+
+export async function ensureNativeProperty(
+  spec: NativePropertySpec,
+  options: EnsureNativePropertyOptions = {},
+): Promise<EnsureNativePropertyResult | null> {
   const name = spec.name ?? spec.property ?? spec.key;
   if (!name || !logseq.Editor.upsertProperty) return null;
 
@@ -373,18 +557,22 @@ export async function ensureNativeProperty(spec: NativePropertySpec): Promise<En
     : null;
 
   if (existing) {
-    let schemaNote = 'property already exists in graph';
-    try {
-      await logseq.Editor.upsertProperty(name, nativePropertySchema(spec), { name: displayName });
-      schemaNote = 'property already exists in graph; schema refreshed';
-    } catch (error) {
-      const message = formatError(error);
-      if (isPropertySchemaConflict(message)) {
-        schemaNote = `property already exists in graph; schema left unchanged: ${message}`;
-      } else if (isPluginPropertyOwnershipError(message)) {
-        schemaNote = 'property is owned by Logseq or another plugin; schema left unchanged';
-      } else {
-        throw error;
+    let schemaNote = 'property already exists in graph; schema refresh skipped for idempotent setup';
+    if (shouldRefreshExistingPropertySchema(name, spec, options)) {
+      try {
+        await logseq.Editor.upsertProperty(name, nativePropertySchema(spec), { name: displayName });
+        schemaNote = 'property already exists in graph; schema refreshed for DB picker compatibility';
+      } catch (error) {
+        const message = formatError(error);
+        if (isPropertySchemaConflict(message)) {
+          schemaNote = `property already exists in graph; schema left unchanged: ${message}`;
+        } else if (isPluginPropertyOwnershipError(message)) {
+          schemaNote = 'property is owned by Logseq or another plugin; schema left unchanged';
+        } else if (isDeferredTimeout(message)) {
+          schemaNote = `Logseq API timed out while refreshing property schema; rerun setup after Logseq settles: ${message}`;
+        } else {
+          throw error;
+        }
       }
     }
     let nodeTargetNote: string | null = null;
@@ -396,20 +584,6 @@ export async function ensureNativeProperty(spec: NativePropertySpec): Promise<En
         nodeTargetNote = 'property is owned by Logseq or another plugin; node target tags left unchanged';
       } else {
         nodeTargetNote = `node target tags not updated: ${message}`;
-      }
-    }
-    if (String(spec.type ?? '').toLowerCase() === 'choice' && Array.isArray(spec.choices)) {
-      try {
-        await ensureChoicePropertyValues(name, spec.choices);
-      } catch (error) {
-        const message = formatError(error);
-        if (isPluginPropertyOwnershipError(message)) {
-          return skippedNativeProperty(
-            name,
-            'property is owned by Logseq or another plugin; choice values left unchanged',
-          );
-        }
-        return skippedNativeProperty(name, `choice values not updated: ${message}`);
       }
     }
     return skippedNativeProperty(
@@ -435,6 +609,9 @@ export async function ensureNativeProperty(spec: NativePropertySpec): Promise<En
         name,
         'property is owned by Logseq or another plugin; schema left unchanged',
       );
+    }
+    if (isDeferredTimeout(message)) {
+      return skippedNativeProperty(name, `Logseq API timed out while creating property; rerun setup after Logseq settles: ${message}`);
     }
     throw error;
   }
@@ -464,23 +641,91 @@ function pageNamesFromValue(value: string): string[] {
   return refs;
 }
 
+async function getPageByExactTitle(name: string): Promise<Record<string, unknown> | null> {
+  if (!logseq.DB?.datascriptQuery) return null;
+  const title = String(name ?? '').trim();
+  if (!title) return null;
+  try {
+    const rows = await logseq.DB.datascriptQuery(
+      `[:find (pull ?p [*])
+ :in $ ?title ?name
+ :where
+ (or [?p :block/title ?title]
+     [?p :block/original-name ?title]
+     [?p :block/name ?name])]`,
+      title,
+      title.toLowerCase(),
+    );
+    const record = Array.isArray(rows) ? (rows[0]?.[0] as Record<string, unknown> | undefined) : undefined;
+    if (!record) return null;
+    return {
+      ...record,
+      id: record.id ?? record[':db/id'] ?? record['db/id'],
+      title: record.title ?? record[':block/title'] ?? record['block/title'],
+      name: record.name ?? record[':block/name'] ?? record['block/name'],
+      originalName:
+        record.originalName ??
+        record[':block/original-name'] ??
+        record['block/original-name'] ??
+        record.title ??
+        record[':block/title'] ??
+        record['block/title'],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function pageLabelMatchesNodeRef(label: string, requestedName: string): boolean {
+  const actual = visiblePageLabel(label).trim().toLowerCase();
+  const requested = visiblePageLabel(requestedName).trim().toLowerCase();
+  if (!actual || !requested) return false;
+  if (actual === requested) return true;
+  // Slash titles are semantically meaningful in DB graphs. Do not silently map
+  // [[LSS Placeholder/Person]] to [[LSS Placeholder - Person]].
+  if (requested.includes('/')) return false;
+  return safePageName(actual).toLowerCase() === safePageName(requested).toLowerCase();
+}
+
+function pageEntityIdFromRecord(
+  page: Record<string, unknown> | null | undefined,
+  requestedName: string,
+): string | number | null {
+  if (!page) return null;
+  const id =
+    page.id ??
+    page[':db/id'] ??
+    page['db/id'];
+  if (id == null) return null;
+  // Node properties must point to a page entity. Some Logseq APIs can return
+  // property value/block entities for ambiguous names; those have ids but no
+  // visible page title and must not be used as node property targets.
+  const label = entityVisibleLabel(page);
+  return label && pageLabelMatchesNodeRef(label, requestedName) ? (id as string | number) : null;
+}
+
 export async function resolveNodePropertyIds(value: string): Promise<Array<string | number>> {
   const ids: Array<string | number> = [];
   for (const name of pageNamesFromValue(value)) {
-    const page =
-      (await getPage(name)) ||
-      (await getPage(safePageName(name))) ||
-      (await getPage(name.toLowerCase())) ||
-      (await resolvePageFromIdentity(name).catch(() => null));
-    const id = (page as Record<string, unknown> | null)?.id;
-    if (id != null) ids.push(id as string | number);
+    const candidates = [
+      await getPageByExactTitle(name),
+      await getPage(name),
+      await getPage(safePageName(name)),
+      await getPage(name.toLowerCase()),
+      await resolvePageFromIdentity(name).catch(() => null),
+    ];
+    for (const page of candidates) {
+      const id = pageEntityIdFromRecord(page as Record<string, unknown> | null, name);
+      if (id == null) continue;
+      ids.push(id as string | number);
+      break;
+    }
   }
   return ids;
 }
 
 export async function resolveUpsertPropertyValue(property: string, value: string): Promise<unknown> {
   if (property === 'lss-object-type') {
-    await ensureLssObjectTypeProperty();
     return value;
   }
 
@@ -489,12 +734,9 @@ export async function resolveUpsertPropertyValue(property: string, value: string
   if (!(await isDbGraph())) return value;
 
   if (type === 'date') {
-    // Logseq DB date properties (type 'date') expect a "journal date" (YYYYMMDD integer)
-    // rather than epoch milliseconds. Return the compact journal day number.
-    const jd = toJournalDay(value);
-    if (jd != null) return jd;
-    // Fallback: if we couldn't parse, return null so caller can decide to clear/skip.
-    return null;
+    // Logseq DB date properties are ref-valued. The value must be the journal page entity id,
+    // not a raw compact journal-day number.
+    return resolveJournalDatePropertyValue(value);
   }
 
   if (type !== 'node') return value;

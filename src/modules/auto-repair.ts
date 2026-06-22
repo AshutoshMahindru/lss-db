@@ -1,10 +1,11 @@
 import { canonicalPropertyKey, entityIdentity, pageHasClassTag } from '../core/db-properties';
-import { blockId, getBlocks, getPage, walkBlocks } from '../core/editor';
-import { formatError, newResult } from '../core/runner';
+import { blockId, currentPageName, getBlocks, getPage, walkBlocks } from '../core/editor';
+import { formatError, newResult, writeReport } from '../core/runner';
 import { safePageName, safeTag } from '../core/names';
 import { allObjects } from '../registry';
 import { isQueryLikeContent, relationshipPropertyNames } from './queries';
 import { repairNamedPage } from './repair';
+import { primaryObjectTypesFromTags, readIncomingSourceTagsForPage } from './repair-source-tags';
 
 const DEBOUNCE_MS = 1800;
 const COOLDOWN_MS = 5000;
@@ -26,15 +27,15 @@ export function registerAutoRepairSettings(): void {
     {
       key: AUTO_REPAIR_SETTING_KEY,
       type: 'boolean',
-      default: false,
+      default: true,
       title: 'Enable LSS auto-repair',
-      description: 'Automatically repair tagged LSS pages after relevant graph changes. Leave off for manual/spec-safe operation.',
+      description: 'Automatically materialize properties on tagged LSS pages after relevant graph changes.',
     },
   ]);
 }
 
 export function isAutoRepairEnabled(): boolean {
-  return logseq.settings?.[AUTO_REPAIR_SETTING_KEY] === true;
+  return logseq.settings?.[AUTO_REPAIR_SETTING_KEY] !== false;
 }
 
 export function enterRepairSession(): void {
@@ -134,6 +135,43 @@ async function pageNameFromChangedBlock(block: Record<string, unknown>): Promise
   return pageName ? String(pageName) : null;
 }
 
+function referencedPageName(ref: unknown): string {
+  if (ref == null) return '';
+  if (typeof ref === 'string') return ref.trim();
+  if (typeof ref === 'number') return '';
+  if (typeof ref !== 'object') return '';
+  const record = ref as Record<string, unknown>;
+  const name = record.originalName ?? record.name ?? record.title ?? record.fullTitle;
+  return typeof name === 'string' ? name.trim() : '';
+}
+
+function collectReferencedPageNames(block: Record<string, unknown>): Set<string> {
+  const names = new Set<string>();
+  const add = (name: string) => {
+    const clean = safePageName(name);
+    if (!clean || shouldSkipPage(clean) || LSS_OBJECT_TAGS.has(safeTag(clean))) return;
+    names.add(clean);
+  };
+
+  const refs = [
+    block.refs,
+    block['block/refs'],
+    block.references,
+    block['block/references'],
+  ];
+  for (const value of refs) {
+    if (Array.isArray(value)) {
+      for (const ref of value) add(referencedPageName(ref));
+    } else {
+      add(referencedPageName(value));
+    }
+  }
+
+  const text = blockText(block);
+  for (const match of text.matchAll(/\[\[([^\]]+?)\]\]/g)) add(match[1] ?? '');
+  return names;
+}
+
 function changeEventRelevant(
   blocks: Array<Record<string, unknown>>,
   txData: Array<[number, string, unknown, number, boolean]>,
@@ -142,11 +180,14 @@ function changeEventRelevant(
   return (blocks ?? []).some((block) => blockContentRelevant(blockText(block)));
 }
 
-async function collectPageNames(blocks: Array<Record<string, unknown>>): Promise<Set<string>> {
+async function collectPageNames(blocks: Array<Record<string, unknown>>, includeReferences = false): Promise<Set<string>> {
   const pages = new Set<string>();
   for (const block of blocks ?? []) {
     const pageName = await pageNameFromChangedBlock(block);
     if (pageName && !shouldSkipPage(pageName)) pages.add(pageName);
+    if (includeReferences || blockContentRelevant(blockText(block))) {
+      for (const linkedPageName of collectReferencedPageNames(block)) pages.add(linkedPageName);
+    }
   }
   return pages;
 }
@@ -186,6 +227,9 @@ async function pageQualifiesForAutoRepair(pageName: string): Promise<boolean> {
     }
   }
 
+  const incoming = await readIncomingSourceTagsForPage(newResult('lss:auto-repair-probe'), pageName, pageBlockId, page);
+  if (primaryObjectTypesFromTags(incoming.classTags).size === 1) return true;
+
   const blocks = await getBlocks(pageName);
   for (const block of walkBlocks(blocks)) {
     if (blockContentRelevant(String(block?.content ?? block?.title ?? ''))) return true;
@@ -213,6 +257,7 @@ async function runAutoRepair(pageName: string): Promise<void> {
   }
 
   if (result.errors.length) {
+    await writeReport(result);
     await logseq.UI.showMsg(`LSS auto-sync ${pageName}: ${result.errors[0]}`, 'warning', { timeout: 5000 });
     return;
   }
@@ -239,14 +284,21 @@ export function scheduleAutoRepair(pageName: string): void {
   );
 }
 
+export async function scheduleCurrentPageAutoRepair(): Promise<void> {
+  if (!isAutoRepairEnabled()) return;
+  const pageName = await currentPageName();
+  if (pageName) scheduleAutoRepair(pageName);
+}
+
 export async function handleGraphChange(
   blocks: Array<Record<string, unknown>>,
   txData: Array<[number, string, unknown, number, boolean]>,
 ): Promise<void> {
   if (!isAutoRepairEnabled()) return;
   if (isRepairSessionActive()) return;
-  if (!changeEventRelevant(blocks, txData)) return;
-  const pages = await collectPageNames(blocks);
+  const hasRelevantTx = txDataRelevant(txData);
+  if (!hasRelevantTx && !changeEventRelevant(blocks, txData)) return;
+  const pages = await collectPageNames(blocks, hasRelevantTx);
   for (const pageName of pages) scheduleAutoRepair(pageName);
 }
 

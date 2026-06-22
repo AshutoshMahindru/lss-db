@@ -1,6 +1,7 @@
 /**
  * Pure-logic checks for repair/date/query helpers (no Logseq runtime required).
- * Mirrors the rules in src/core/db-properties.ts and src/modules/queries.ts.
+ * Mirrors the rules in src/core/db-properties.ts, src/modules/query-edn.ts,
+ * and src/modules/dashboard-query-repair.ts.
  */
 
 function looksLikePageEntityId(raw) {
@@ -8,8 +9,12 @@ function looksLikePageEntityId(raw) {
 }
 
 function parseDateFromRawString(raw) {
-  const text = String(raw ?? '').trim();
+  const text = String(raw ?? '').trim().replace(/^\[\[/, '').replace(/\]\]$/, '');
   if (!text || /^\[\[\s*\]\]$/.test(text)) return null;
+  if (/^today$/i.test(text)) {
+    const d = new Date();
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12, 0, 0, 0);
+  }
   const wiki = text.match(/\[\[(\d{4}-\d{2}-\d{2})\]\]/);
   if (wiki?.[1]) {
     const ms = Date.parse(`${wiki[1]}T12:00:00.000Z`);
@@ -18,6 +23,24 @@ function parseDateFromRawString(raw) {
   if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
     const ms = Date.parse(`${text}T12:00:00.000Z`);
     return Number.isNaN(ms) ? null : ms;
+  }
+  const journalTitle = text.match(/^([A-Za-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th),\s*(\d{4})$/);
+  if (journalTitle) {
+    const month = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+      .indexOf(journalTitle[1].slice(0, 3).toLowerCase());
+    const day = Number(journalTitle[2]);
+    const year = Number(journalTitle[3]);
+    if (month >= 0 && day >= 1 && day <= 31 && year >= 1900 && year <= 2100) {
+      return Date.UTC(year, month, day, 12, 0, 0, 0);
+    }
+  }
+  if (/^\d{8}$/.test(text)) {
+    const y = Number(text.slice(0, 4));
+    const m = Number(text.slice(4, 6));
+    const d = Number(text.slice(6, 8));
+    if (y >= 1900 && y <= 2100 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return Date.UTC(y, m - 1, d, 12, 0, 0, 0);
+    }
   }
   if (/^\d+$/.test(text)) {
     const num = Number(text);
@@ -30,6 +53,8 @@ function parseDatePropertyValue(value) {
   if (value == null) return null;
   if (typeof value === 'number' && !Number.isNaN(value) && value >= 1e11) return value;
   if (typeof value === 'object') {
+    const journalDay = value.journalDay ?? value['journal-day'] ?? value[':block/journal-day'] ?? value['block/journal-day'];
+    if (typeof journalDay === 'number') return parseDateFromRawString(String(journalDay));
     const label = String(value.name ?? value.originalName ?? value.title ?? '').trim();
     if (label) {
       const fromLabel = parseDateFromRawString(label) ?? parseDateFromRawString(`[[${label}]]`);
@@ -168,6 +193,18 @@ function isAdvancedQueryBlockContent(content) {
   const text = String(content ?? '').trim();
   if (/#\+BEGIN_QUERY/i.test(text)) return true;
   return /^\{[\s\S]*:query\s+(?:\[:find|\()/i.test(text);
+}
+
+function dbAdvancedQueryBlockNeedsStructureRepair(struct) {
+  return (
+    !struct.hasQueryClassTag ||
+    !struct.hasQueryProperty ||
+    !struct.hasCodeChild ||
+    !struct.childTitleHasEdn ||
+    !struct.childDisplayTypeIsCode ||
+    struct.rawEdnInParentContent ||
+    struct.parentCollapsed
+  );
 }
 
 function extractBalancedVector(text, startIdx) {
@@ -375,6 +412,13 @@ const tests = [
     if (ms == null) throw new Error('journal object date should parse');
   },
   () => {
+    if (parseDatePropertyValue(20260622) == null) throw new Error('journal-day int should parse');
+    if (parseDatePropertyValue({ ':block/journal-day': 20260622 }) == null) {
+      throw new Error('journal entity should parse by :block/journal-day');
+    }
+    if (parseDatePropertyValue('Jun 22nd, 2026') == null) throw new Error('Logseq journal title should parse');
+  },
+  () => {
     if (isDbPageRefValue(1739750400000)) throw new Error('timestamp must not be page ref');
     if (!isDbPageRefValue(465)) throw new Error('page id 465 must be page ref');
     if (isDbPageRefValue('FTV')) throw new Error('plain text must not be page ref');
@@ -453,6 +497,35 @@ const tests = [
     }
     if (!advanced.includes('(property :plugin.property.logseq-lss-db-final-plugin/venture <% current page %>)')) {
       throw new Error('advanced venture clause should keep Logseq DSL current-page binding');
+    }
+  },
+  () => {
+    const healthy = {
+      hasQueryClassTag: true,
+      hasQueryProperty: true,
+      hasCodeChild: true,
+      rawEdnInParentContent: false,
+      queryEdnInChild: true,
+      childDisplayTypeIsCode: true,
+      childTitleHasEdn: true,
+      parentCollapsed: false,
+    };
+    if (dbAdvancedQueryBlockNeedsStructureRepair(healthy)) {
+      throw new Error('canonical advanced query block shape should not need structure repair');
+    }
+    for (const [key, value] of [
+      ['hasQueryClassTag', false],
+      ['hasQueryProperty', false],
+      ['hasCodeChild', false],
+      ['childTitleHasEdn', false],
+      ['childDisplayTypeIsCode', false],
+      ['rawEdnInParentContent', true],
+      ['parentCollapsed', true],
+    ]) {
+      const broken = { ...healthy, [key]: value };
+      if (!dbAdvancedQueryBlockNeedsStructureRepair(broken)) {
+        throw new Error(`advanced query block shape should repair when ${key}=${value}`);
+      }
     }
   },
   () => {

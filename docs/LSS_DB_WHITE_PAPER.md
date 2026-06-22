@@ -2,9 +2,9 @@
 
 ## Building a Typed Knowledge Graph in Logseq DB
 
-Version: 2026-06-20  
+Version: 2026-06-21  
 Repository: `AshutoshMahindru/lss-db`  
-Plugin: `logseq-lss-db-final-plugin` v2.0.0
+Plugin: `logseq-lss-db-final-plugin` v2.0.12
 
 ## Executive Summary
 
@@ -16,7 +16,8 @@ The system is intentionally not a folder hierarchy. It is a typed graph:
 - A page's properties say what is known about the page.
 - Relationship properties connect pages to other pages.
 - Journal blocks are capture surfaces, not durable entity records.
-- Repair/materialization commands convert tagged journal captures into entity pages.
+- The primary UI workflow is: create/open a page, add one LSS type tag, then run `lss: materialise page`.
+- Materialization commands convert tagged pages or journal captures into fully materialized LSS records.
 - Dashboards are query-backed graph views over typed entities.
 
 The current implementation has moved away from native Logseq tag properties as the entity schema source because Logseq renders native tag properties on any tagged block. That behavior pollutes journal pages when a user tags a capture block with `#Function`, `#Project`, `#Interaction`, or another LSS entity class. The coded setup now removes LSS entity schema fields from native tags and materializes those fields onto entity pages instead.
@@ -41,7 +42,8 @@ The main design challenge is separating capture, classification, entity data, an
 Use this rule:
 
 ```text
-#Tag = what kind of thing this is
+#PrimaryLssTypeTag = what kind of thing this page is
+#InstanceHintTag = shorthand for another page/entity related to this page
 property:: value = fact or relationship about this thing
 [[Page]] = graph node / entity reference
 ```
@@ -51,6 +53,9 @@ For example:
 ```text
 Rahul - Launch Campaign Meeting
 #Interaction
+#FTV
+#LaunchCampaign
+#Rahul
 
 lss-object-type:: Interaction
 participants:: [[Rahul]], [[Ashutosh]]
@@ -61,13 +66,20 @@ date:: 20260620
 status:: captured
 ```
 
-The page is an `Interaction`. It is not a `Person`, `Project`, and `Venture` at the same time. Those are related entities, not additional class tags.
+The page is an `Interaction`. It is not a `Person`, `Project`, and `Venture`
+at the same time. Those are related entities. During materialization, additional
+instance hint tags such as `#FTV`, `#LaunchCampaign`, or `#Rahul` may be resolved
+to existing pages and transposed into page properties and relevant sections.
+After transposition, the durable graph model is still relationship properties
+and page refs, not multiple class tags.
 
 ## Conceptual Architecture
 
 ```mermaid
 flowchart TD
-    J["Journal block<br/>capture text"] -->|repair/materialize| E["Entity page"]
+    P0["Created/opened page<br/>with one LSS type tag"] -->|lss: materialise page| E["Entity page"]
+    H["Instance hint tags<br/>#FTV #Rahul #LaunchCampaign"] -->|resolve + transpose| E
+    J["Journal block<br/>capture text"] -->|repair/materialize| E
     E -->|class tag| C["#Interaction / #Project / #Function"]
     E -->|page properties| P["status, owner, date,<br/>venture, project, related-to"]
     E -->|page refs| G["Other entity pages"]
@@ -316,6 +328,48 @@ Rahul - Launch Campaign Meeting #Interaction #Person #Project #Venture
 
 That says the meeting is a person, project, and venture. It is not. It is an interaction related to those entities.
 
+### Primary Type Tags and Instance Hint Tags
+
+LSS distinguishes two tag roles during materialization:
+
+```text
+Primary type tag:    #Interaction
+Instance hint tags:  #Rahul #LaunchCampaign #FTV
+```
+
+There must be exactly one primary LSS type tag on a page that is being
+materialized automatically. The primary tag determines the page's schema.
+
+Additional tags may be used as instance hints when they name or alias existing
+pages. These are temporary input shortcuts, not additional class identities. The
+materializer should resolve them to page refs, write the appropriate relationship
+properties, and transpose them into matching sections where useful.
+
+Example materialization input:
+
+```text
+Rahul - Launch Campaign Meeting
+#Interaction
+#Rahul
+#LaunchCampaign
+#FTV
+```
+
+Expected durable result:
+
+```text
+Rahul - Launch Campaign Meeting
+#Interaction
+
+participants:: [[Rahul]]
+project:: [[Launch Campaign]]
+venture:: [[FTV]]
+related-to:: [[Rahul]], [[Launch Campaign]], [[FTV]]
+```
+
+The final record remains an `Interaction`, not a `Person`, `Project`, or
+`Venture`.
+
 ### Page Properties
 
 Page properties are the canonical place for entity data:
@@ -327,7 +381,7 @@ venture:: [[FTV]]
 project:: [[Launch Campaign]]
 participants:: [[Rahul]], [[Ashutosh]]
 related-to:: [[FTV]], [[Launch Campaign]], [[Pricing]]
-review-date:: 20260620
+review-date:: [[Jun 20th, 2026]]
 ```
 
 These properties belong on the entity page, not on the native Logseq tag.
@@ -370,20 +424,76 @@ The repository now encodes this policy:
 ```text
 1. Native tags are class labels.
 2. Native tag properties are not used for LSS entity schema fields.
-3. Entity schema fields are materialized onto entity pages.
-4. Templates are layout and query scaffolds only.
-5. Journal captures are cleaned after materialization.
-6. Dashboards query entity pages through advanced query blocks.
+3. The primary page UX is: create/open page -> tag one LSS type -> run lss: materialise page.
+4. Entity schema fields are materialized onto entity pages by the materialization command.
+5. Additional non-primary tags may be consumed as instance hints, not class labels.
+6. Templates are layout and query scaffolds only.
+7. Journal captures are cleaned after materialization.
+8. Dashboards query entity pages through advanced query blocks.
 ```
+
+The materialization command is intentionally generic. It should work for any
+registered area/entity/form/word-extender page type in `src/registry/data.json`:
+
+```text
+New or existing page
+#OnePrimaryLssType
+#OptionalInstanceHint
+#AnotherOptionalInstanceHint
+
+run: lss: materialise page
+```
+
+The command infers the type from the page tag, writes the registry-backed page
+properties, inserts or repairs layout/query sections, and cleans stale managed
+properties. A user should not have to run type-specific commands for ordinary
+entity creation.
+
+Additional tags on the page are interpreted as instance hints only if they are
+not LSS type tags and can be resolved to existing area/entity/form pages or safe
+aliases. The materializer should use the registry relationship graph to map those
+resolved pages into specific relationship properties such as `venture`,
+`project`, `participants`, `function`, `subject`, `condition`, or `related-to`.
+Where the template contains a matching section, it should also transpose those
+refs into that section for human-readable context.
+
+If an instance hint cannot be resolved, or resolves to multiple possible pages,
+the command should report it and ask for confirmation rather than writing a
+wrong relationship.
+
+This is a per-page materialization workflow. Global scaffold artifacts such as
+schema pages, tag contract pages, relationship pages, dashboard contract pages,
+and native property definitions are still created once by setup commands.
 
 In code, this is implemented mainly in:
 
 ```text
 src/modules/setup.ts       native tag/property setup and tag-property cleanup
 src/modules/templates.ts   native template installation and layout-only templates
-src/modules/repair.ts      journal materialization and page property repair
-src/modules/queries.ts     dashboard query generation and repair
-src/modules/diagnose.ts    query/path diagnostics
+src/modules/repair.ts      page/journal materialization and page property repair
+src/modules/repair-dashboard.ts
+                         dashboard query repair runner and linked parent dashboard refresh
+src/modules/queries.ts     public facade over the split query modules
+src/modules/query-builders.ts
+                         dashboard/simple/advanced query generation with current-page fallbacks
+src/modules/query-edn.ts  query content normalization, equivalence, and repair drift checks
+src/modules/query-probes.ts
+                         Datascript probe helpers for query/path diagnostics
+src/modules/dashboard-query-repair.ts
+                         query-block discovery, content reads, scoring, and canonical selection
+src/modules/dashboard-query-views.ts
+                         registry/template view derivation for dashboard sections
+src/modules/advanced-query-blocks.ts
+                         Logseq DB /Advanced Query block adapter and host-scope repair boundary
+src/modules/diagnose.ts    current-page diagnostic report assembly
+src/modules/diagnose-journal.ts
+                         journal materialization status diagnostics
+src/modules/diagnose-native-tags.ts
+                         native tag schema pollution diagnostics
+src/modules/diagnose-query-probes.ts
+                         live query and Datascript probe helpers for diagnostics
+src/modules/native-tag-cleanup.ts
+                         dedicated native tag schema cleanup command
 src/registry/data.json     schema registry and command/audit metadata
 ```
 
@@ -438,6 +548,83 @@ Every durable LSS entity page has:
 4. Optional layout sections and query-backed sections.
 ```
 
+### Canonical Materialization UX
+
+The default user-facing workflow for any page-like LSS object is the same for
+areas, entities, forms that are page-materialized, and word extenders:
+
+```text
+1. Create or open a page.
+2. Add exactly one primary LSS type tag.
+3. Optionally add one or more instance hint tags.
+4. Run lss: materialise page.
+```
+
+Examples:
+
+```text
+FGPL
+#Venture
+
+run: lss: materialise page
+```
+
+```text
+Sales
+#Function
+
+run: lss: materialise page
+```
+
+```text
+Rahul - Launch Campaign Discussion
+#Interaction
+#FTV
+#LaunchCampaign
+#Rahul
+
+run: lss: materialise page
+```
+
+After materialization, the durable entity should be equivalent to:
+
+```text
+Rahul - Launch Campaign Discussion
+#Interaction
+
+lss-object-type:: Interaction
+participants:: [[Rahul]]
+venture:: [[FTV]]
+project:: [[Launch Campaign]]
+related-to:: [[FTV]], [[Launch Campaign]], [[Rahul]]
+```
+
+The extra tags are input shorthand. They do not mean the page is also a
+`Venture`, `Project`, or `Person`.
+
+The command should infer the object type from the primary LSS tag and then
+generate the instance artifacts for that page:
+
+- Apply or confirm the native class tag on the page.
+- Set `lss-object-type`.
+- Materialize all `requiredProperties` and registered optional properties from the matching `RegistryObject`, or the equivalent registered area metadata for area pages.
+- Fill default values from the registry.
+- Infer contextual relationship properties from current page context and instance hint tags where possible.
+- Use controlled `LSS Placeholder/<target>` page refs when a node relationship cannot be inferred, so Logseq DB can still display the full page-property schema. Replace placeholders with real page refs as soon as the relationship is known.
+- Insert or repair layout sections from the matching registry template.
+- Insert or repair query-backed sections for dashboard-like templates.
+- Transpose resolved instance hints into matching page sections where the template has an appropriate section.
+- Remove, demote, or report consumed instance hint tags so they do not remain ambiguous class signals.
+- Remove stale duplicate managed single-value properties before writing the canonical value.
+- Preserve user-authored notes and child blocks.
+
+It should not regenerate global scaffold artifacts for every page. Those belong
+to graph setup.
+
+If the current page has no LSS type tag, or has multiple primary LSS type tags,
+the command must stop and ask the user to choose exactly one type. It should not
+guess silently.
+
 Example:
 
 ```text
@@ -448,8 +635,9 @@ lss-object-type:: Function
 venture:: [[FTV]]
 area:: [[Area/Work]]
 status:: active
-owner::
-review-date:: 20260620
+owner:: [[LSS Placeholder/Person]]
+review-date:: [[Jun 20th, 2026]]
+related-to:: [[LSS Placeholder/related-to]]
 
 Notes
 - ...
@@ -646,6 +834,11 @@ stage:: build
 
 ## Entity Type Recommendations
 
+The property lists below are registry/schema references. They describe what the
+materialization command should generate or repair on the page. They are not
+instructions for users to type visible property lines into templates or page
+bodies.
+
 ### Venture
 
 Purpose: a long-running initiative, business, thesis, or strategic effort.
@@ -685,6 +878,17 @@ owner::
 status::
 review-date::
 related-to::
+```
+
+Expected materialized sections:
+
+```text
+Purpose
+Related venture
+Responsibilities
+Projects
+Workstreams
+Notes
 ```
 
 Example:
@@ -892,34 +1096,60 @@ They should contain:
 
 They should not contain schema property lines as ordinary visible content.
 
+Templates may be applied by the materialization command, but they remain
+structural. The command writes real page properties; the template contributes
+sections and query blocks.
+
 The code enforces this by:
 
 - Stripping property lines out of template bodies.
-- Sourcing default page properties from `RegistryObject`.
+- Sourcing default page properties from `RegistryObject` during creation or materialization.
 - Disabling `Apply template to tags` for DB entity templates.
 - Configuring DB advanced query blocks inside template sections.
+- Repairing older visible schema-property mirror blocks by promoting the values to page properties and cleaning the duplicate content lines.
 
-## Journal Materialization
+## Page and Journal Materialization
 
-`lss:50repair-current-page` is the recovery and materialization command.
+`lss: materialise page` is the single primary UI command for page materialization.
+The command also performs repair of older materialized pages and journal captures.
+
+When run on an area/entity/form/word-extender page, materialization:
+
+1. Reads the page's primary LSS type tag.
+2. Collects additional non-primary tags as instance hints.
+3. Applies or confirms the primary class tag on the page.
+4. Writes `lss-object-type`.
+5. Writes the registry-backed page properties for the selected type.
+6. Resolves instance hints to existing pages or confirmed aliases.
+7. Maps resolved hints to relationship properties using the registry relationship graph.
+8. Infers additional relationship properties from current page context where possible.
+9. Leaves unresolved node relationships empty and reports that a real page value must be selected.
+10. Inserts or repairs layout and query sections from the matching template.
+11. Transposes resolved hints into relevant sections where the section exists.
+12. Cleans visible schema property lines and stale managed property values.
+13. Removes, demotes, or reports consumed instance hint tags.
+14. Repairs dashboard query blocks and linked parent dashboards.
 
 When run on a journal page, it:
 
 1. Removes LSS entity schema properties from native tags where possible.
 2. Finds journal blocks tagged with LSS entity class tags.
-3. Derives or creates an entity page name.
-4. Ensures page-level properties on the entity page.
-5. Applies the class tag to the entity page.
-6. Copies useful block content/children to the entity page.
-7. Replaces the original journal block with a clean page link.
+3. Collects non-primary tags on those blocks as instance hints.
+4. Derives or creates an entity page name.
+5. Ensures page-level properties on the entity page.
+6. Applies the class tag to the entity page.
+7. Resolves and transposes instance hints into relationship properties and sections.
+8. Copies useful block content/children to the entity page.
+9. Cleans visible schema property lines after they have been promoted.
+10. Replaces the original journal block with a clean page link.
 
 Before:
 
 ```text
-- marketing #Function
+- marketing #Function #FTV
   status:: active
   venture::
-  review-date:: 20260620
+  review-date:: [[Jun 20th, 2026]]
 ```
 
 After:
@@ -935,9 +1165,9 @@ marketing
 #Function
 
 lss-object-type:: Function
-venture::
+venture:: [[FTV]]
 status:: active
-review-date:: 20260620
+review-date:: [[Jun 20th, 2026]]
 ```
 
 ## Dashboard Query Architecture
@@ -984,15 +1214,33 @@ live-query-channel/stored:: advanced-dsl
 | `lss:5setup-db-tags` | Create DB tag contract pages |
 | `lss:6setup-tag-properties` | Create tag-property contract pages without binding schema to native tags |
 | `lss:7setup-relationships` | Create relationship contract pages |
-| `lss:8setup-templates` | Install native templates for entity-page materialization |
+| `lss:8setup-templates` | Install native layout/query templates used by materialization |
 | `lss:9setup-dashboards` | Create dashboard contract pages |
 | `lss:10setup-word-extenders` | Create word extender entries |
 | `lss:11setup-db-native-config` | Create native tags/properties and remove entity schema properties from native tags |
 | `lss:12setup-page-tree` | Create page tree |
 | `lss:13verify-schema` | Verify expected scaffold pages |
-| `lss:50repair-current-page` | Materialize journal entities, repair page properties, repair dashboard queries |
+| `lss:34audit-graph` | Run graph-level verification, registry counts, and native tag schema pollution summary |
+| `lss: materialise page` | Materialize the current tagged page as an LSS area/entity/form/word-extender page |
 | `lss:51diagnose-current-page` | Write a detailed diagnostic report |
-| `lss:52new-function` | Create a Function entity page |
+| `lss:54clean-native-tag-schema-properties` | Remove LSS registry schema properties from native tag property lists |
+
+The stable numbered command set is supplemented by registry-backed aliases for
+every object type in `src/registry/data.json`. Page-like entity and word
+extender types are available as `lss: new-*` commands, for example
+`lss: new-regime`, `lss: new-financial-asset`, and `lss: new-term`. Form types
+are available as cursor insertion commands, for example `lss: insert-event`,
+`lss: insert-weekly-review`, and `lss: insert-work-stream-update`.
+
+The preferred daily workflow is not type-specific creation commands. The
+preferred workflow is:
+
+```text
+Create/open page
+Add one primary LSS type tag
+Optionally add instance hint tags for related pages
+Run lss: materialise page
+```
 
 ## Operational Guidance
 
@@ -1010,27 +1258,36 @@ Only tag the capture as an entity when you want it materialized:
 - Rahul - Launch Campaign Discussion #Interaction
 ```
 
-### When Creating Entities
+Then run `lss: materialise page` on the journal page. The command should create
+or repair the durable entity page, copy useful content, and replace the journal
+capture with a clean page link.
 
-Create or materialize a page with one primary class tag:
+### When Creating Areas, Entities, and Page-Materialized Forms
+
+Create or open the page, then add one primary LSS type tag:
 
 ```text
 Launch Campaign
 #Project
+#FTV
+#Marketing
 ```
 
-Then add properties:
+Then run:
 
 ```text
-venture:: [[FTV]]
-function:: [[Marketing]]
-owner:: [[Ashutosh]]
-status:: active
+lss: materialise page
 ```
+
+The command writes the page properties and relationship placeholders from the
+registry, applies the layout/query template, and cleans stale managed values. The
+user should only edit properties manually when replacing placeholders with real
+relationships, resolving ambiguous hint tags, or adding facts that were not
+inferable from context.
 
 ### When Relating Entities
 
-Use properties, not extra class tags:
+Use properties as the final graph model:
 
 ```text
 participants:: [[Rahul]], [[Ashutosh]]
@@ -1038,6 +1295,21 @@ project:: [[Launch Campaign]]
 venture:: [[FTV]]
 related-to:: [[Pricing]]
 ```
+
+Instance hint tags are allowed as materialization shorthand before or during
+creation:
+
+```text
+Rahul - Launch Campaign Discussion
+#Interaction
+#Rahul
+#LaunchCampaign
+#FTV
+```
+
+`lss: materialise page` should resolve those hints and write the relationship
+properties above. After materialization, the durable record should be driven by
+the properties and page refs, not by the hint tags.
 
 ### When Cleaning Existing Graphs
 
@@ -1049,13 +1321,11 @@ lss: 11setup-db-native-config
 
 to remove schema fields from native tags.
 
-Run:
-
 ```text
-lss: 50repair-current-page
+lss: materialise page
 ```
 
-on affected journal pages to materialize and clean tagged capture blocks.
+on affected pages or journal pages to materialize and clean tagged records.
 
 Run:
 
@@ -1073,10 +1343,13 @@ The coded setup should maintain these invariants:
 1. Native entity tags do not own LSS instance schema properties.
 2. Entity pages own instance properties.
 3. Templates are layout/query scaffolds, not property sources.
-4. Journal blocks do not retain durable entity schema fields after repair.
-5. Dashboards query entity pages through class tags and relationship properties.
-6. Relationships are page references, not string labels.
-7. Query blocks are repaired to the canonical advanced DSL EDN shape.
+4. Materialization is the only workflow step that turns a typed page into a complete LSS record.
+5. Page and journal block bodies do not retain durable entity schema fields after repair/materialization.
+6. Dashboards query entity pages through class tags and relationship properties.
+7. Relationships are page references, not string labels.
+8. Query blocks are repaired to the canonical advanced DSL EDN shape.
+9. A page must have exactly one primary LSS type tag before automatic materialization proceeds.
+10. Additional instance hint tags are transposed into relationship properties and sections, not treated as extra class identities.
 ```
 
 ## Risks and Edge Cases
@@ -1094,7 +1367,7 @@ lss: 11setup-db-native-config
 and then:
 
 ```text
-lss: 50repair-current-page
+lss: materialise page
 ```
 
 ### API Availability
@@ -1105,22 +1378,40 @@ Some cleanup depends on Logseq's `removeTagProperty` API. If unavailable, the pl
 
 If Logseq already injected visible property lines into a journal block, repair must clean the block content and/or materialize it into an entity page.
 
+### Missing or Multiple Type Tags
+
+The `lss: materialise page` command depends on a primary type tag. If the page
+has no LSS type tag, or has multiple primary LSS type tags such as `#Project`
+and `#Interaction`, the command must stop and ask the user to choose the
+intended type. It should not infer from page title alone when the result would
+write schema properties.
+
+### Ambiguous Instance Hint Tags
+
+Instance hint tags such as `#FTV`, `#Rahul`, or `#LaunchCampaign` are useful only
+when they resolve unambiguously to existing pages or approved aliases. If a hint
+matches multiple pages, does not exist, or points to a page whose type cannot be
+used by any relationship on the primary object type, materialization must report
+the problem and avoid writing that relationship.
+
+After a hint is consumed, the command should either remove it, demote it to a
+non-class note/link, or report that it remains as unresolved input. It should not
+leave consumed hints in a state that makes the page appear to have multiple class
+identities.
+
 ### Duplicate or Ambiguous Entity Names
 
 Materialization derives an entity page name from the journal block. Ambiguous names may need manual renaming.
 
 ### Relationship Values as Text
 
-Relationships should use page references. Text values like `FTV` may not resolve correctly in DB queries. Repair tools attempt to convert obvious text relationships into page references, but intentional review is still important.
+Relationships should use page references. Text values like `FTV` may not resolve correctly in DB queries. Page audit now verifies key relationship fields including `venture`, `project`, `related-project`, `related-projects`, `participants`, `attendees`, and `related-to` as page references, and flags references that cannot be resolved to existing pages. Repair tools attempt to convert obvious text relationships into page references, but intentional review is still important.
 
 ## Recommended Future Work
 
-1. Add a dedicated command to clean native tag properties across all LSS tags with a concise report.
-2. Add diagnostics for "tag still has native schema properties".
-3. Add a journal-specific diagnose section showing whether a tagged block has already been materialized.
-4. Expand relationship validation so `venture`, `project`, `participants`, and `related-to` values are verified as page references.
-5. Generate schema documentation from `src/registry/data.json` into a human-readable reference page.
-6. Add migration reports for existing journal blocks polluted by old native tag properties.
+1. Expand journal-specific diagnose output with batch summaries across date ranges.
+2. Generate schema documentation from `src/registry/data.json` into a human-readable reference page.
+3. Add migration reports for existing journal blocks polluted by old native tag properties.
 
 ## Summary
 
@@ -1128,10 +1419,12 @@ LSS DB is a typed graph system layered onto Logseq DB. The current coded setup i
 
 ```text
 Tags classify.
+Instance hint tags provide shorthand input.
 Page properties describe and relate.
 Templates structure.
 Journals capture.
-Repair materializes.
+Materialization generates the complete typed page.
+Repair materializes legacy captures and fixes drift.
 Dashboards query.
 ```
 

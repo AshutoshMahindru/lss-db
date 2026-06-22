@@ -840,7 +840,8 @@
         "venture",
         "owner",
         "status",
-        "review-date"
+        "review-date",
+        "related-to"
       ]
     },
     {
@@ -869,7 +870,8 @@
         "status",
         "priority",
         "deadline",
-        "review-date"
+        "review-date",
+        "related-to"
       ]
     },
     {
@@ -891,12 +893,14 @@
       "properties": [
         "area",
         "venture",
+        "project",
         "function",
         "owner",
         "status",
         "cadence",
         "related-projects",
-        "review-date"
+        "review-date",
+        "related-to"
       ]
     },
     {
@@ -973,6 +977,7 @@
         "role",
         "email",
         "phone",
+        "related-to",
         "relationship-context",
         "family-relation",
         "closeness",
@@ -1001,6 +1006,9 @@
         "organisation-type",
         "website",
         "relationship-owner",
+        "relationship-status",
+        "people",
+        "related-to",
         "confidentiality",
         "review-date"
       ]
@@ -1026,10 +1034,12 @@
         "status",
         "document-type",
         "related-venture",
+        "project",
         "related-project",
         "related-person",
         "related-organisation",
         "file",
+        "related-to",
         "url",
         "date",
         "confidentiality"
@@ -1058,7 +1068,9 @@
         "file-url",
         "related-document",
         "related-venture",
+        "project",
         "related-project",
+        "related-to",
         "confidentiality",
         "uploaded-on"
       ]
@@ -1111,9 +1123,11 @@
         "owner",
         "output-type",
         "related-venture",
+        "project",
         "related-project",
         "related-person",
         "related-organisation",
+        "related-to",
         "confidentiality",
         "date",
         "review-date"
@@ -1312,9 +1326,16 @@
         "date",
         "area",
         "venture",
+        "project",
         "related-project",
         "related-workstream",
+        "participants",
         "attendees",
+        "related-to",
+        "topics",
+        "outputs",
+        "actions",
+        "decisions",
         "interaction-type",
         "status",
         "follow-up-date"
@@ -1340,12 +1361,16 @@
       "properties": [
         "area",
         "venture",
+        "project",
         "related-project",
         "related-concept",
+        "related-to",
         "owner",
+        "asked-by",
         "status",
         "priority",
         "asked-on",
+        "answer",
         "review-date"
       ],
       "defaultValues": {
@@ -1369,8 +1394,11 @@
       "properties": [
         "area",
         "venture",
+        "project",
         "related-project",
         "related-concept",
+        "topics",
+        "related-to",
         "source",
         "confidence",
         "status",
@@ -1397,8 +1425,10 @@
       "properties": [
         "area",
         "venture",
+        "project",
         "related-project",
         "related-pursuit",
+        "related-to",
         "owner",
         "status",
         "priority",
@@ -1426,14 +1456,19 @@
       "properties": [
         "area",
         "venture",
+        "project",
         "related-project",
         "related-workstream",
+        "related-to",
         "owner",
         "status",
         "decided-on",
+        "decided-by",
         "decision-maker",
         "related-question",
-        "follow-up-action"
+        "follow-up-action",
+        "rationale",
+        "confidence"
       ],
       "defaultValues": {
         "status": "proposed"
@@ -1468,12 +1503,15 @@
         "date",
         "area",
         "venture",
+        "project",
         "workstream",
         "related-project",
+        "related-to",
         "owner",
         "status",
         "blockers",
-        "next-actions"
+        "next-actions",
+        "actions"
       ],
       "defaultValues": {
         "status": "captured"
@@ -1497,13 +1535,18 @@
       "properties": [
         "area",
         "venture",
+        "project",
         "related-project",
         "related-workstream",
         "owner",
+        "assigned-to",
         "Status",
         "Priority",
         "Deadline",
+        "due-date",
         "Scheduled",
+        "related-to",
+        "source",
         "depends-on",
         "blocked-by"
       ],
@@ -1546,8 +1589,10 @@
       "properties": [
         "area",
         "venture",
+        "project",
         "related-project",
         "related-concept",
+        "related-to",
         "source",
         "status",
         "captured-on",
@@ -1579,11 +1624,15 @@
         "review-scope",
         "area",
         "venture",
+        "project",
         "related-project",
+        "related-to",
         "owner",
         "status",
         "review-output",
-        "next-actions"
+        "next-actions",
+        "actions",
+        "decisions"
       ]
     },
     {
@@ -1609,7 +1658,9 @@
         "owner",
         "status",
         "review-output",
-        "next-actions"
+        "next-actions",
+        "actions",
+        "decisions"
       ]
     },
     {
@@ -1633,11 +1684,15 @@
         "review-scope",
         "area",
         "venture",
+        "project",
         "related-project",
+        "related-to",
         "owner",
         "status",
         "review-output",
-        "next-actions"
+        "next-actions",
+        "actions",
+        "decisions"
       ]
     },
     {
@@ -1661,11 +1716,15 @@
         "review-scope",
         "area",
         "venture",
+        "project",
         "related-project",
+        "related-to",
         "owner",
         "status",
         "review-output",
-        "next-actions"
+        "next-actions",
+        "actions",
+        "decisions"
       ]
     },
     {
@@ -1743,10 +1802,13 @@
         "date",
         "area",
         "venture",
+        "project",
         "related-project",
         "related-person",
         "related-organisation",
+        "related-to",
         "attendees",
+        "participants",
         "location",
         "status",
         "follow-up-date",
@@ -2220,6 +2282,69 @@
       }
     },
     {
+      "name": "project",
+      "type": "node",
+      "cardinality": "many",
+      "targets": [
+        "Project"
+      ],
+      "bidirectional": true,
+      "inverseTitle": "Related Objects",
+      "choices": [],
+      "default": null,
+      "aliases": [
+        "related-project"
+      ],
+      "sensitivity": "normal",
+      "uiPosition": null,
+      "description": "Canonical project relation for operationally meaningful project links.",
+      "audit": {
+        "requiredValueRule": "LSS-AUD-004-required-property-values",
+        "nodeReferenceRule": "LSS-AUD-005-node-properties-use-node-references",
+        "targetRule": "LSS-AUD-006-node-property-target-tags"
+      }
+    },
+    {
+      "name": "related-to",
+      "type": "node",
+      "cardinality": "many",
+      "targets": [],
+      "bidirectional": false,
+      "inverseTitle": null,
+      "choices": [],
+      "default": null,
+      "aliases": [],
+      "sensitivity": "normal",
+      "uiPosition": null,
+      "description": "General graph edge for relevant entities or pages when a more specific relationship is not warranted.",
+      "audit": {
+        "requiredValueRule": "LSS-AUD-004-required-property-values",
+        "nodeReferenceRule": "LSS-AUD-005-node-properties-use-node-references",
+        "targetRule": null
+      }
+    },
+    {
+      "name": "blocks",
+      "type": "node",
+      "cardinality": "many",
+      "targets": [],
+      "bidirectional": false,
+      "inverseTitle": null,
+      "choices": [],
+      "default": null,
+      "aliases": [
+        "blocked-by"
+      ],
+      "sensitivity": "normal",
+      "uiPosition": null,
+      "description": "Generic blocking relationship when a more specific dependency field is not appropriate.",
+      "audit": {
+        "requiredValueRule": "LSS-AUD-004-required-property-values",
+        "nodeReferenceRule": "LSS-AUD-005-node-properties-use-node-references",
+        "targetRule": null
+      }
+    },
+    {
       "name": "client",
       "type": "node",
       "cardinality": "many",
@@ -2235,6 +2360,52 @@
       "sensitivity": "normal",
       "uiPosition": null,
       "description": "Client/customer relation.",
+      "audit": {
+        "requiredValueRule": "LSS-AUD-004-required-property-values",
+        "nodeReferenceRule": "LSS-AUD-005-node-properties-use-node-references",
+        "targetRule": "LSS-AUD-006-node-property-target-tags"
+      }
+    },
+    {
+      "name": "participants",
+      "type": "node",
+      "cardinality": "many",
+      "targets": [
+        "Person",
+        "Organisation"
+      ],
+      "bidirectional": true,
+      "inverseTitle": "Interactions",
+      "choices": [],
+      "default": null,
+      "aliases": [
+        "attendees"
+      ],
+      "sensitivity": "normal",
+      "uiPosition": null,
+      "description": "Canonical participant relation for interactions and meetings.",
+      "audit": {
+        "requiredValueRule": "LSS-AUD-004-required-property-values",
+        "nodeReferenceRule": "LSS-AUD-005-node-properties-use-node-references",
+        "targetRule": "LSS-AUD-006-node-property-target-tags"
+      }
+    },
+    {
+      "name": "stakeholders",
+      "type": "node",
+      "cardinality": "many",
+      "targets": [
+        "Person",
+        "Organisation"
+      ],
+      "bidirectional": true,
+      "inverseTitle": "Stakeholder Objects",
+      "choices": [],
+      "default": null,
+      "aliases": [],
+      "sensitivity": "normal",
+      "uiPosition": null,
+      "description": "People or organisations materially involved in an object.",
       "audit": {
         "requiredValueRule": "LSS-AUD-004-required-property-values",
         "nodeReferenceRule": "LSS-AUD-005-node-properties-use-node-references",
@@ -2496,6 +2667,73 @@
       }
     },
     {
+      "name": "assigned-to",
+      "type": "node",
+      "cardinality": "one",
+      "targets": [
+        "Person"
+      ],
+      "bidirectional": true,
+      "inverseTitle": "Assigned Actions",
+      "choices": [],
+      "default": null,
+      "aliases": [],
+      "sensitivity": "normal",
+      "uiPosition": null,
+      "description": "Person assigned to complete an action.",
+      "audit": {
+        "requiredValueRule": "LSS-AUD-004-required-property-values",
+        "nodeReferenceRule": "LSS-AUD-005-node-properties-use-node-references",
+        "targetRule": "LSS-AUD-006-node-property-target-tags"
+      }
+    },
+    {
+      "name": "asked-by",
+      "type": "node",
+      "cardinality": "one",
+      "targets": [
+        "Person",
+        "Organisation"
+      ],
+      "bidirectional": true,
+      "inverseTitle": "Questions Asked",
+      "choices": [],
+      "default": null,
+      "aliases": [],
+      "sensitivity": "normal",
+      "uiPosition": null,
+      "description": "Person or organisation that raised a question.",
+      "audit": {
+        "requiredValueRule": "LSS-AUD-004-required-property-values",
+        "nodeReferenceRule": "LSS-AUD-005-node-properties-use-node-references",
+        "targetRule": "LSS-AUD-006-node-property-target-tags"
+      }
+    },
+    {
+      "name": "decided-by",
+      "type": "node",
+      "cardinality": "many",
+      "targets": [
+        "Person",
+        "Organisation"
+      ],
+      "bidirectional": true,
+      "inverseTitle": "Decisions Made",
+      "choices": [],
+      "default": null,
+      "aliases": [
+        "decision-maker"
+      ],
+      "sensitivity": "normal",
+      "uiPosition": null,
+      "description": "Canonical decision-maker relation.",
+      "audit": {
+        "requiredValueRule": "LSS-AUD-004-required-property-values",
+        "nodeReferenceRule": "LSS-AUD-005-node-properties-use-node-references",
+        "targetRule": "LSS-AUD-006-node-property-target-tags"
+      }
+    },
+    {
       "name": "decision-maker",
       "type": "node",
       "cardinality": "many",
@@ -2532,6 +2770,51 @@
       "sensitivity": "normal",
       "uiPosition": null,
       "description": "Question relation.",
+      "audit": {
+        "requiredValueRule": "LSS-AUD-004-required-property-values",
+        "nodeReferenceRule": "LSS-AUD-005-node-properties-use-node-references",
+        "targetRule": "LSS-AUD-006-node-property-target-tags"
+      }
+    },
+    {
+      "name": "decisions",
+      "type": "node",
+      "cardinality": "many",
+      "targets": [
+        "Decision"
+      ],
+      "bidirectional": true,
+      "inverseTitle": "Source Records",
+      "choices": [],
+      "default": null,
+      "aliases": [],
+      "sensitivity": "normal",
+      "uiPosition": null,
+      "description": "Canonical relation to decisions raised by a record.",
+      "audit": {
+        "requiredValueRule": "LSS-AUD-004-required-property-values",
+        "nodeReferenceRule": "LSS-AUD-005-node-properties-use-node-references",
+        "targetRule": "LSS-AUD-006-node-property-target-tags"
+      }
+    },
+    {
+      "name": "actions",
+      "type": "node",
+      "cardinality": "many",
+      "targets": [
+        "ActionItem"
+      ],
+      "bidirectional": true,
+      "inverseTitle": "Source Records",
+      "choices": [],
+      "default": null,
+      "aliases": [
+        "next-actions",
+        "follow-up-action"
+      ],
+      "sensitivity": "normal",
+      "uiPosition": null,
+      "description": "Canonical relation to action items raised by a record.",
       "audit": {
         "requiredValueRule": "LSS-AUD-004-required-property-values",
         "nodeReferenceRule": "LSS-AUD-005-node-properties-use-node-references",
@@ -2814,6 +3097,33 @@
       }
     },
     {
+      "name": "outputs",
+      "type": "node",
+      "cardinality": "many",
+      "targets": [
+        "Output",
+        "Document",
+        "File"
+      ],
+      "bidirectional": true,
+      "inverseTitle": "Source Records",
+      "choices": [],
+      "default": null,
+      "aliases": [
+        "related-documents",
+        "document",
+        "file"
+      ],
+      "sensitivity": "normal",
+      "uiPosition": null,
+      "description": "Canonical relation to documents, files, or other produced outputs.",
+      "audit": {
+        "requiredValueRule": "LSS-AUD-004-required-property-values",
+        "nodeReferenceRule": "LSS-AUD-005-node-properties-use-node-references",
+        "targetRule": "LSS-AUD-006-node-property-target-tags"
+      }
+    },
+    {
       "name": "document",
       "type": "node",
       "cardinality": "many",
@@ -2895,6 +3205,29 @@
         "requiredValueRule": "LSS-AUD-004-required-property-values",
         "nodeReferenceRule": "LSS-AUD-005-node-properties-use-node-references",
         "targetRule": "LSS-AUD-006-node-property-target-tags"
+      }
+    },
+    {
+      "name": "topics",
+      "type": "node",
+      "cardinality": "many",
+      "targets": [],
+      "bidirectional": false,
+      "inverseTitle": null,
+      "choices": [],
+      "default": null,
+      "aliases": [
+        "related-concept",
+        "related-concepts",
+        "concepts"
+      ],
+      "sensitivity": "normal",
+      "uiPosition": null,
+      "description": "Topic, concept, subject, or ordinary page connected to a record.",
+      "audit": {
+        "requiredValueRule": "LSS-AUD-004-required-property-values",
+        "nodeReferenceRule": "LSS-AUD-005-node-properties-use-node-references",
+        "targetRule": null
       }
     },
     {
@@ -3315,6 +3648,28 @@
       "sensitivity": "normal",
       "uiPosition": null,
       "description": "Date field for due.",
+      "audit": {
+        "requiredValueRule": "LSS-AUD-004-required-property-values",
+        "nodeReferenceRule": null,
+        "targetRule": null
+      }
+    },
+    {
+      "name": "due-date",
+      "type": "date",
+      "cardinality": "one",
+      "targets": [],
+      "bidirectional": false,
+      "inverseTitle": null,
+      "choices": [],
+      "default": null,
+      "aliases": [
+        "Deadline",
+        "due"
+      ],
+      "sensitivity": "normal",
+      "uiPosition": null,
+      "description": "Canonical due date for action-like records when not using native task Deadline.",
       "audit": {
         "requiredValueRule": "LSS-AUD-004-required-property-values",
         "nodeReferenceRule": null,
@@ -4720,6 +5075,25 @@
       }
     },
     {
+      "name": "relationship-status",
+      "type": "text",
+      "cardinality": "one",
+      "targets": [],
+      "bidirectional": false,
+      "inverseTitle": null,
+      "choices": [],
+      "default": null,
+      "aliases": [],
+      "sensitivity": "normal",
+      "uiPosition": null,
+      "description": "Relationship status for organisations or people.",
+      "audit": {
+        "requiredValueRule": "LSS-AUD-004-required-property-values",
+        "nodeReferenceRule": null,
+        "targetRule": null
+      }
+    },
+    {
       "name": "family-relation",
       "type": "choice",
       "cardinality": "one",
@@ -4878,6 +5252,44 @@
       "sensitivity": "normal",
       "uiPosition": null,
       "description": "Text field: review-output.",
+      "audit": {
+        "requiredValueRule": "LSS-AUD-004-required-property-values",
+        "nodeReferenceRule": null,
+        "targetRule": null
+      }
+    },
+    {
+      "name": "answer",
+      "type": "text",
+      "cardinality": "one",
+      "targets": [],
+      "bidirectional": false,
+      "inverseTitle": null,
+      "choices": [],
+      "default": null,
+      "aliases": [],
+      "sensitivity": "normal",
+      "uiPosition": null,
+      "description": "Answer or current resolution for a question.",
+      "audit": {
+        "requiredValueRule": "LSS-AUD-004-required-property-values",
+        "nodeReferenceRule": null,
+        "targetRule": null
+      }
+    },
+    {
+      "name": "rationale",
+      "type": "text",
+      "cardinality": "one",
+      "targets": [],
+      "bidirectional": false,
+      "inverseTitle": null,
+      "choices": [],
+      "default": null,
+      "aliases": [],
+      "sensitivity": "normal",
+      "uiPosition": null,
+      "description": "Rationale behind a decision.",
       "audit": {
         "requiredValueRule": "LSS-AUD-004-required-property-values",
         "nodeReferenceRule": null,
@@ -6215,6 +6627,247 @@
       "auditSeverity": "ERROR"
     },
     {
+      "property": "project",
+      "type": "node",
+      "targets": [
+        "Project"
+      ],
+      "cardinality": "many",
+      "bidirectional": true,
+      "inverseTitle": "Related Objects",
+      "requiredBy": [],
+      "optionalBy": [
+        "Project",
+        "WorkStream",
+        "Document",
+        "File",
+        "Output",
+        "Interaction",
+        "Question",
+        "Insight",
+        "Idea",
+        "Decision",
+        "ActionItem"
+      ],
+      "aliases": [
+        "related-project"
+      ],
+      "auditSeverity": "ERROR"
+    },
+    {
+      "property": "participants",
+      "type": "node",
+      "targets": [
+        "Person",
+        "Organisation"
+      ],
+      "cardinality": "many",
+      "bidirectional": true,
+      "inverseTitle": "Interactions",
+      "requiredBy": [],
+      "optionalBy": [
+        "Interaction",
+        "Event"
+      ],
+      "aliases": [
+        "attendees"
+      ],
+      "auditSeverity": "ERROR"
+    },
+    {
+      "property": "stakeholders",
+      "type": "node",
+      "targets": [
+        "Person",
+        "Organisation"
+      ],
+      "cardinality": "many",
+      "bidirectional": true,
+      "inverseTitle": "Stakeholder Objects",
+      "requiredBy": [],
+      "optionalBy": [],
+      "aliases": [],
+      "auditSeverity": "ERROR"
+    },
+    {
+      "property": "assigned-to",
+      "type": "node",
+      "targets": [
+        "Person"
+      ],
+      "cardinality": "one",
+      "bidirectional": true,
+      "inverseTitle": "Assigned Actions",
+      "requiredBy": [],
+      "optionalBy": [
+        "ActionItem"
+      ],
+      "aliases": [],
+      "auditSeverity": "ERROR"
+    },
+    {
+      "property": "asked-by",
+      "type": "node",
+      "targets": [
+        "Person",
+        "Organisation"
+      ],
+      "cardinality": "one",
+      "bidirectional": true,
+      "inverseTitle": "Questions Asked",
+      "requiredBy": [],
+      "optionalBy": [
+        "Question"
+      ],
+      "aliases": [],
+      "auditSeverity": "ERROR"
+    },
+    {
+      "property": "decided-by",
+      "type": "node",
+      "targets": [
+        "Person",
+        "Organisation"
+      ],
+      "cardinality": "many",
+      "bidirectional": true,
+      "inverseTitle": "Decisions Made",
+      "requiredBy": [],
+      "optionalBy": [
+        "Decision"
+      ],
+      "aliases": [
+        "decision-maker"
+      ],
+      "auditSeverity": "ERROR"
+    },
+    {
+      "property": "related-to",
+      "type": "node",
+      "targets": [],
+      "cardinality": "many",
+      "bidirectional": false,
+      "inverseTitle": null,
+      "requiredBy": [],
+      "optionalBy": [
+        "Project",
+        "WorkStream",
+        "Person",
+        "Organisation",
+        "Document",
+        "File",
+        "Output",
+        "Interaction",
+        "Question",
+        "Insight",
+        "Idea",
+        "Decision",
+        "ActionItem"
+      ],
+      "aliases": [],
+      "auditSeverity": "ERROR"
+    },
+    {
+      "property": "topics",
+      "type": "node",
+      "targets": [],
+      "cardinality": "many",
+      "bidirectional": false,
+      "inverseTitle": null,
+      "requiredBy": [],
+      "optionalBy": [
+        "Interaction",
+        "Insight"
+      ],
+      "aliases": [
+        "related-concept",
+        "related-concepts",
+        "concepts"
+      ],
+      "auditSeverity": "ERROR"
+    },
+    {
+      "property": "decisions",
+      "type": "node",
+      "targets": [
+        "Decision"
+      ],
+      "cardinality": "many",
+      "bidirectional": true,
+      "inverseTitle": "Source Records",
+      "requiredBy": [],
+      "optionalBy": [
+        "Interaction",
+        "Review",
+        "WeeklyReview",
+        "MonthlyReview"
+      ],
+      "aliases": [],
+      "auditSeverity": "ERROR"
+    },
+    {
+      "property": "actions",
+      "type": "node",
+      "targets": [
+        "ActionItem"
+      ],
+      "cardinality": "many",
+      "bidirectional": true,
+      "inverseTitle": "Source Records",
+      "requiredBy": [],
+      "optionalBy": [
+        "Interaction",
+        "Review",
+        "WeeklyReview",
+        "MonthlyReview"
+      ],
+      "aliases": [
+        "next-actions",
+        "follow-up-action"
+      ],
+      "auditSeverity": "ERROR"
+    },
+    {
+      "property": "outputs",
+      "type": "node",
+      "targets": [
+        "Output",
+        "Document",
+        "File"
+      ],
+      "cardinality": "many",
+      "bidirectional": true,
+      "inverseTitle": "Source Records",
+      "requiredBy": [],
+      "optionalBy": [
+        "Interaction"
+      ],
+      "aliases": [
+        "related-documents",
+        "document",
+        "file"
+      ],
+      "auditSeverity": "ERROR"
+    },
+    {
+      "property": "blocks",
+      "type": "node",
+      "targets": [],
+      "cardinality": "many",
+      "bidirectional": false,
+      "inverseTitle": null,
+      "requiredBy": [],
+      "optionalBy": [
+        "ActionItem",
+        "Project",
+        "WorkStream"
+      ],
+      "aliases": [
+        "blocked-by"
+      ],
+      "auditSeverity": "ERROR"
+    },
+    {
       "property": "related-template",
       "type": "node",
       "targets": [
@@ -6542,10 +7195,11 @@
       "status": "active",
       "schemaVersion": "1.0.0",
       "applyTemplateToTagsRecommended": false,
-      "body": "- Subject #Template\n  - Scope\n    -\n  - Courses\n    -\n  - Concepts\n    -\n  - Skills\n    -\n  - Resources\n    -\n  - Questions\n    -",
+      "body": "- Subject #Template\n  - Scope\n    -\n  - Courses\n    -\n  - Lessons\n    -\n  - Concepts\n    -\n  - Skills\n    -\n  - Resources\n    -\n  - Questions\n    -",
       "requiredSections": [
         "Scope",
         "Courses",
+        "Lessons",
         "Concepts",
         "Skills",
         "Resources",
@@ -6655,25 +7309,15 @@
       "status": "active",
       "schemaVersion": "1.0.0",
       "applyTemplateToTagsRecommended": false,
-      "body": "- Venture #Template\n  - Properties\n    -\n  - Functions\n    -\n  - Projects\n    -\n  - Workstreams\n    -\n  - Action-Items\n    -\n  - Teams\n    -\n  - Organisations\n    -\n  - People\n    -\n  - Interactions\n    -\n  - Questions\n    -\n  - Insights\n    -\n  - Ideas\n    -\n  - Decisions\n    -\n  - Notes\n    -\n  - Documents\n    -\n  - Files\n    -\n  - Review\n    -",
+      "body": "- Venture #Template\n  - Functions\n    -\n  - Projects\n    -\n  - Workstreams\n    -\n  - Interactions\n    -\n  - Decisions\n    -\n  - Open actions\n    -\n  - Documents/outputs\n    -",
       "requiredSections": [
-        "Properties",
         "Functions",
         "Projects",
         "Workstreams",
-        "Action-Items",
-        "Teams",
-        "Organisations",
-        "People",
         "Interactions",
-        "Questions",
-        "Insights",
-        "Ideas",
         "Decisions",
-        "Notes",
-        "Documents",
-        "Files",
-        "Review"
+        "Open actions",
+        "Documents/outputs"
       ]
     },
     {
@@ -6685,15 +7329,14 @@
       "status": "active",
       "schemaVersion": "1.0.0",
       "applyTemplateToTagsRecommended": false,
-      "body": "- Function #Template\n  - Purpose\n    -\n  - Responsibilities\n    -\n  - Related venture\n    -\n  - Projects\n    -\n  - Workstreams\n    -\n  - People\n    -\n  - Documents\n    -",
+      "body": "- Function #Template\n  - Purpose\n    -\n  - Related venture\n    -\n  - Responsibilities\n    -\n  - Projects\n    -\n  - Workstreams\n    -\n  - Notes\n    -",
       "requiredSections": [
         "Purpose",
-        "Responsibilities",
         "Related venture",
+        "Responsibilities",
         "Projects",
         "Workstreams",
-        "People",
-        "Documents"
+        "Notes"
       ]
     },
     {
@@ -6705,18 +7348,22 @@
       "status": "active",
       "schemaVersion": "1.0.0",
       "applyTemplateToTagsRecommended": false,
-      "body": "- Project #Template\n  - Outcome\n    -\n  - Why this matters\n    -\n  - Scope\n    -\n  - Current status\n    -\n  - Next actions\n    -\n  - Decisions\n    -\n  - Interactions\n    -\n  - Documents\n    -\n  - Files\n    -\n  - Notes\n    -\n  - Review\n    -",
+      "body": "- Project #Template\n  - Outcome\n    -\n  - Why this matters\n    -\n  - Scope\n    -\n  - Current status\n    -\n  - Next actions\n    -\n  - Interactions\n    -\n  - Questions\n    -\n  - Insights\n    -\n  - Ideas\n    -\n  - Decisions\n    -\n  - Notes\n    -\n  - Documents\n    -\n  - Files\n    -\n  - Outputs\n    -\n  - Review\n    -",
       "requiredSections": [
         "Outcome",
         "Why this matters",
         "Scope",
         "Current status",
         "Next actions",
-        "Decisions",
         "Interactions",
+        "Questions",
+        "Insights",
+        "Ideas",
+        "Decisions",
+        "Notes",
         "Documents",
         "Files",
-        "Notes",
+        "Outputs",
         "Review"
       ]
     },
@@ -6787,13 +7434,15 @@
       "status": "active",
       "schemaVersion": "1.0.0",
       "applyTemplateToTagsRecommended": false,
-      "body": "- Person #Template\n  - Profile\n    -\n  - Relationship context\n    -\n  - Organisations\n    -\n  - Ventures / projects\n    -\n  - Interactions\n    -\n  - Notes\n    -\n  - Follow-ups\n    -",
+      "body": "- Person #Template\n  - Profile\n    -\n  - Relationship context\n    -\n  - Owned work\n    -\n  - Interactions\n    -\n  - Commitments\n    -\n  - Documents\n    -\n  - Organisations\n    -\n  - Notes\n    -\n  - Follow-ups\n    -",
       "requiredSections": [
         "Profile",
         "Relationship context",
-        "Organisations",
-        "Ventures / projects",
+        "Owned work",
         "Interactions",
+        "Commitments",
+        "Documents",
+        "Organisations",
         "Notes",
         "Follow-ups"
       ]
@@ -7450,6 +8099,17 @@
         "Documents",
         "Files",
         "Outputs"
+      ],
+      "dataPolicy": "query-backed-only",
+      "staticCopiesAllowed": "snapshots-only",
+      "auditRule": "LSS-AUD-010-dashboard-query-backed-sections"
+    },
+    {
+      "page": "Dashboard/Function",
+      "status": "active",
+      "sections": [
+        "Projects",
+        "Workstreams"
       ],
       "dataPolicy": "query-backed-only",
       "staticCopiesAllowed": "snapshots-only",
@@ -8295,6 +8955,117 @@
           },
           {
             "property": "related-venture",
+            "operator": "includesCurrentPage"
+          }
+        ]
+      },
+      "nativeQueryStatus": "generate-with-logseq-query-builder-or-plugin",
+      "exportPolicy": "inherit"
+    },
+    {
+      "id": "VIEW-FUNCTION-PROJECTS",
+      "title": "Function / Projects",
+      "dashboard": "Dashboard/Function",
+      "section": "Projects",
+      "sourceTags": [
+        "Project"
+      ],
+      "filters": [
+        {
+          "property": "function",
+          "operator": "includesCurrentPage"
+        }
+      ],
+      "columns": [
+        "name",
+        "status",
+        "owner",
+        "venture",
+        "priority",
+        "deadline",
+        "review-date"
+      ],
+      "sort": [
+        {
+          "property": "status",
+          "direction": "asc"
+        },
+        {
+          "property": "priority",
+          "direction": "desc"
+        },
+        {
+          "property": "deadline",
+          "direction": "asc"
+        }
+      ],
+      "groupBy": [],
+      "emptyState": "No projects found.",
+      "viewType": "table",
+      "queryIntentDSL": {
+        "all": [
+          {
+            "tagAny": [
+              "Project"
+            ]
+          },
+          {
+            "property": "function",
+            "operator": "includesCurrentPage"
+          }
+        ]
+      },
+      "nativeQueryStatus": "generate-with-logseq-query-builder-or-plugin",
+      "exportPolicy": "inherit"
+    },
+    {
+      "id": "VIEW-FUNCTION-WORKSTREAMS",
+      "title": "Function / Workstreams",
+      "dashboard": "Dashboard/Function",
+      "section": "Workstreams",
+      "sourceTags": [
+        "WorkStream"
+      ],
+      "filters": [
+        {
+          "property": "function",
+          "operator": "includesCurrentPage"
+        }
+      ],
+      "columns": [
+        "name",
+        "status",
+        "owner",
+        "venture",
+        "cadence",
+        "review-date"
+      ],
+      "sort": [
+        {
+          "property": "status",
+          "direction": "asc"
+        },
+        {
+          "property": "priority",
+          "direction": "desc"
+        },
+        {
+          "property": "deadline",
+          "direction": "asc"
+        }
+      ],
+      "groupBy": [],
+      "emptyState": "No workstreams found.",
+      "viewType": "table",
+      "queryIntentDSL": {
+        "all": [
+          {
+            "tagAny": [
+              "WorkStream"
+            ]
+          },
+          {
+            "property": "function",
             "operator": "includesCurrentPage"
           }
         ]

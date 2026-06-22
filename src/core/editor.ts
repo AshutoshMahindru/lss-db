@@ -1,7 +1,7 @@
 import { MODE, THROTTLE_MS, VERSION } from '../config';
 import { isLogseqBuiltinTag } from './builtin-tags';
 import { pageForCanonical } from '../registry';
-import { entityVisibleLabel, safePageName, safeTag } from './names';
+import { entityVisibleLabel, looksLikeUuid, safePageName, safeTag } from './names';
 import type { Result } from './types';
 import { formatError, sleep } from './runner';
 
@@ -203,13 +203,220 @@ export function flattenBlockText(blocks: any[]): string {
   return out.join('\n');
 }
 
-export async function currentPageName(): Promise<string | null> {
+async function pageNameFromIdentityCandidate(candidate: unknown): Promise<string | null> {
+  const raw = String(candidate ?? '').trim();
+  if (!raw) return null;
+  const decoded = decodeURIComponent(raw).trim();
+  const token = decoded.replace(/^#/, '').replace(/^\[\[/, '').replace(/\]\]$/, '').trim();
+  if (!token || token === '/' || /^\/?(journals?|graph|all-pages|plugins|logseq)\b/i.test(token)) return null;
+  if (looksLikeUuid(token) && logseq.Editor.getBlock) {
+    const block = await logseq.Editor.getBlock(token).catch(() => null);
+    const blockPage = normalizePageEntityRecord(((block as Record<string, unknown> | null)?.page as Record<string, unknown> | null) ?? null);
+    const blockPageName = pageVisibleName(blockPage);
+    if (blockPageName) return blockPageName;
+  }
+  const page =
+    (await resolvePageFromIdentity(token).catch(() => null)) ||
+    (await getPage(token)) ||
+    (await getPage(safePageName(token))) ||
+    (await getPage(token.toLowerCase()));
+  return pageVisibleName(page, token) || null;
+}
+
+function routePageCandidates(route: any): string[] {
+  const out: string[] = [];
+  const add = (value: unknown) => {
+    const raw = String(value ?? '').trim();
+    if (raw && !out.includes(raw)) out.push(raw);
+  };
+  const params = (route?.parameters ?? {}) as Record<string, unknown>;
+  for (const key of ['name', 'page', 'pageName', 'page-name', 'id', 'uuid', 'blockId', 'block-id']) {
+    add(params[key]);
+  }
+  add(route?.path);
+
   try {
-    const p = await logseq.Editor.getCurrentPage();
-    return pageVisibleName(p) || null;
+    const host = (logseq.Experiments as { ensureHostScope?: () => Window } | undefined)?.ensureHostScope?.() ?? window.top;
+    add(host?.location?.hash);
+    add(host?.document?.title);
+  } catch {
+    /* cross-frame access may be unavailable */
+  }
+  try {
+    const topHash = window.top?.location?.hash;
+    add(topHash);
+  } catch {
+    /* cross-frame access may be unavailable */
+  }
+  try {
+    add(window.location?.hash);
+  } catch {
+    /* ignore */
+  }
+
+  const expanded: string[] = [];
+  for (const raw of out) {
+    const decoded = decodeURIComponent(raw).trim();
+    const path = decoded.replace(/^#/, '');
+    const pageMatch = path.match(/\/page\/([^/?#]+)/i);
+    if (pageMatch?.[1]) expanded.push(pageMatch[1]);
+    const namedMatch = path.match(/[?&](?:page|name)=([^&#]+)/i);
+    if (namedMatch?.[1]) expanded.push(namedMatch[1]);
+    expanded.push(path.replace(/[?#].*$/, ''));
+  }
+  return [...new Set(expanded)];
+}
+
+async function currentPageFromFocusedBlock(): Promise<string | null> {
+  if (!logseq.Editor.getCurrentBlock) return null;
+  try {
+    const block = await logseq.Editor.getCurrentBlock();
+    const page = normalizePageEntityRecord(((block as Record<string, unknown> | null)?.page as Record<string, unknown> | null) ?? null);
+    return pageVisibleName(page) || null;
   } catch {
     return null;
   }
+}
+
+async function currentPageFromRoute(): Promise<string | null> {
+  let route: any = null;
+  try {
+    route = await logseq.App.getCurrentRoute?.();
+  } catch {
+    route = null;
+  }
+  for (const candidate of routePageCandidates(route)) {
+    const name = await pageNameFromIdentityCandidate(candidate);
+    if (name) return name;
+  }
+  return null;
+}
+
+function hostDocument(): Document | null {
+  try {
+    const host = (logseq.Experiments as { ensureHostScope?: () => Window } | undefined)?.ensureHostScope?.();
+    if (host?.document) return host.document;
+  } catch {
+    /* host scope can be unavailable before the app shell is ready */
+  }
+  try {
+    return window.top?.document ?? document;
+  } catch {
+    return document;
+  }
+}
+
+function isHostChromeElement(el: Element): boolean {
+  return Boolean(
+    el.closest(
+      [
+        'nav',
+        'aside',
+        '[role="navigation"]',
+        '.left-sidebar',
+        '.cp__left-sidebar',
+        '.cp__right-sidebar',
+        '[class*="left-sidebar"]',
+        '[class*="right-sidebar"]',
+        '[class*="sidebar-item"]',
+      ].join(','),
+    ),
+  );
+}
+
+function visibleElementScore(el: Element, viewportHeight: number): number {
+  if (isHostChromeElement(el)) return -1;
+  const rect = el.getBoundingClientRect();
+  if (rect.width < 20 || rect.height < 12) return -1;
+  if (rect.bottom < 0 || rect.top > viewportHeight) return -1;
+  const style = el.ownerDocument.defaultView?.getComputedStyle(el);
+  if (!style || style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return -1;
+  const fontSize = Number.parseFloat(style.fontSize || '0') || 0;
+  const aboveFoldBonus = rect.top >= 0 && rect.top < Math.max(480, viewportHeight * 0.55) ? 1000 : 0;
+  const mainPaneBonus = rect.left >= 160 ? 260 : -600;
+  const mainRootBonus = el.closest('main,[role="main"],.cp__sidebar-main-content') ? 500 : 0;
+  return aboveFoldBonus + mainPaneBonus + mainRootBonus + fontSize * 14 - Math.max(0, rect.top);
+}
+
+function titleCandidatesFromElement(el: Element): string[] {
+  const raw = String((el as HTMLElement).innerText || el.textContent || '').trim();
+  if (!raw) return [];
+  return raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/^(add icon|set property|add property|live query|#query)$/i.test(line))
+    .filter((line) => !/[{}()[\]]/.test(line) || /^\[\[[^\]]+\]\]$/.test(line))
+    .filter((line) => line.length <= 160);
+}
+
+async function currentPageFromHostDom(): Promise<string | null> {
+  const doc = hostDocument();
+  if (!doc) return null;
+  const win = doc.defaultView ?? window;
+  const viewportHeight = win.innerHeight || 900;
+  const selectors = [
+    '[data-testid="page-title"]',
+    '[data-test-id="page-title"]',
+    '.page-title',
+    '.ls-page-title',
+    '.page h1',
+    'main h1',
+    'h1',
+    '[contenteditable="true"][class*="title"]',
+    '[class*="page"][class*="title"]',
+  ];
+  const scored: Array<{ text: string; score: number }> = [];
+  const seen = new Set<Element>();
+  const collect = (selector: string, broadPenalty = 0) => {
+    for (const el of Array.from(doc.querySelectorAll(selector))) {
+      if (seen.has(el)) continue;
+      seen.add(el);
+      const score = visibleElementScore(el, viewportHeight) - broadPenalty;
+      if (score < 0) continue;
+      for (const text of titleCandidatesFromElement(el)) scored.push({ text, score });
+    }
+  };
+  for (const selector of selectors) collect(selector);
+  if (!scored.length) {
+    const root =
+      doc.querySelector('main') ||
+      doc.querySelector('[role="main"]') ||
+      doc.querySelector('.cp__sidebar-main-content') ||
+      doc.body;
+    for (const el of Array.from(root.querySelectorAll('h1,h2,[contenteditable="true"],div,span,a')).slice(0, 500)) {
+      if (isHostChromeElement(el)) continue;
+      if (seen.has(el)) continue;
+      seen.add(el);
+      const score = visibleElementScore(el, viewportHeight) - 120;
+      if (score < 0) continue;
+      for (const text of titleCandidatesFromElement(el)) scored.push({ text, score });
+    }
+  }
+  scored.sort((a, b) => b.score - a.score);
+  for (const candidate of scored) {
+    const name = await pageNameFromIdentityCandidate(candidate.text);
+    if (name) return name;
+  }
+  return null;
+}
+
+export async function currentPageName(): Promise<string | null> {
+  const fromRoute = await currentPageFromRoute();
+  if (fromRoute) return fromRoute;
+
+  try {
+    const p = await logseq.Editor.getCurrentPage();
+    const name = pageVisibleName(p);
+    if (name) return name;
+  } catch {
+    /* try DOM fallback */
+  }
+
+  const fromDom = await currentPageFromHostDom();
+  if (fromDom) return fromDom;
+
+  return await currentPageFromFocusedBlock();
 }
 
 export async function updateBlockContent(

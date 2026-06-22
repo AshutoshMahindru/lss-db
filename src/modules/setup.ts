@@ -184,26 +184,34 @@ export async function step10db(r: Result): Promise<void> {
   const skippedBuiltins = allTags().filter((tag) => !nativeDbClassTags().includes(tag));
   if (skippedBuiltins.length) {
     r.notes.push(
-      `Skipped native createTag for Logseq built-in tags: ${skippedBuiltins.map((t) => `#${t}`).join(', ')}.`,
+      `Skipped native createTag for built-in or slash-context tags: ${skippedBuiltins.map((t) => `#${t}`).join(', ')}.`,
     );
   }
   const nativeProperties = [
     ...(registry.propertyRegistry ?? []),
     { name: 'lss-object-type', type: 'default', cardinality: 'one' },
   ];
+  const nativeNodePropertiesToReset = new Set<string>();
   for (const p of nativeProperties) {
     const name = p.name ?? (p as { property?: string }).property ?? (p as { key?: string }).key;
     if (!name) continue;
+    const isNodeProperty = String((p as { type?: unknown }).type ?? '').toLowerCase() === 'node';
     try {
       const ensured = await ensureNativeProperty(p);
       if (ensured?.created) {
         r.actions.push(`CREATE native property: ${name}${ensured.note ? ` (${ensured.note})` : ''}`);
       } else if (ensured?.skipped) {
         r.notes.push(`SKIP native property ${name}: ${ensured.note ?? 'already exists'}`);
+        if (
+          isNodeProperty &&
+          /schema left unchanged|can't be changed|existing data|cannot be changed/i.test(ensured.note ?? '')
+        ) {
+          nativeNodePropertiesToReset.add(canonicalPropertyKey(name));
+        }
       } else if (!ensured) {
         r.errors.push(`native-property ${name}: could not register property`);
       }
-      await sleep(20);
+      await sleep(75);
     } catch (e) {
       const message = formatError(e);
       if (
@@ -211,10 +219,17 @@ export async function step10db(r: Result): Promise<void> {
         isPluginPropertyOwnershipError(message)
       ) {
         r.notes.push(`SKIP native property ${name}: ${message}`);
+        if (isNodeProperty && !isPluginPropertyOwnershipError(message)) {
+          nativeNodePropertiesToReset.add(canonicalPropertyKey(name));
+        }
       } else {
         r.errors.push(`native-property ${name}: ${message}`);
       }
     }
+  }
+  for (const propertyName of nativeNodePropertiesToReset) {
+    r.notes.push(`Detected stale native ${propertyName} property schema; resetting it to a DB node picker.`);
+    await resetNativeNodeProperty(r, propertyName);
   }
   for (const o of allObjects()) {
     const tag = safeTag(o.tag);
@@ -367,69 +382,72 @@ async function removeNativePropertyDefinition(name: string, prop: Record<string,
       lastError = formatError(error);
     }
   }
-  r.errors.push(`removeProperty venture failed for ${unique.join(', ')}: ${lastError || 'unknown error'}`);
+  r.errors.push(`removeProperty ${name} failed for ${unique.join(', ')}: ${lastError || 'unknown error'}`);
   return false;
 }
 
-export async function resetVentureNativeProperty(r: Result): Promise<void> {
+export async function resetNativeNodeProperty(r: Result, propertyName: string): Promise<void> {
+  const cleanName = canonicalPropertyKey(propertyName);
   if (MODE !== 'db') {
-    r.notes.push('reset-venture-property applies only to DB graphs.');
+    r.notes.push(`reset-${cleanName}-property applies only to DB graphs.`);
     return;
   }
   if (!logseq.Editor.removeProperty) {
-    r.errors.push('removeProperty API unavailable; cannot reset native venture property.');
+    r.errors.push(`removeProperty API unavailable; cannot reset native ${cleanName} property.`);
     return;
   }
 
-  r.notes.push(`Before reset: ${await nativePropertySnapshot('venture')}`);
+  r.notes.push(`Before reset: ${await nativePropertySnapshot(cleanName)}`);
   r.notes.push(
     `Native API availability: removeProperty=${logseq.Editor.removeProperty ? 'yes' : 'no'}, upsertProperty=${logseq.Editor.upsertProperty ? 'yes' : 'no'}, setPropertyNodeTags=${logseq.Editor.setPropertyNodeTags ? 'yes' : 'no'}`,
   );
 
-  const spec = propertySpec('venture');
-  if (!spec) {
-    r.errors.push('Registry property spec missing: venture');
+  const spec = propertySpec(cleanName);
+  if (!spec || String(spec.type ?? '').toLowerCase() !== 'node') {
+    r.errors.push(`Registry node property spec missing: ${cleanName}`);
     return;
   }
 
-  const ventureTag =
-    (await logseq.Editor.getTag?.('Venture').catch(() => null)) ||
-    (await logseq.Editor.createTag?.('Venture').catch(() => null));
-  if (!ventureTag) {
-    r.errors.push('Could not resolve/create native #Venture tag; reset aborted.');
-    return;
-  }
-  r.actions.push('ENSURE native tag: #Venture');
-
-  const captured = await capturePropertyValuesForLssObjects('venture');
-  r.notes.push(`Captured ${captured.length} existing LSS venture value(s) before native property reset.`);
-
-  const existing = logseq.Editor.getProperty ? await logseq.Editor.getProperty('venture').catch(() => null) : null;
-  if (existing) {
-    const removedCallOk = await removeNativePropertyDefinition('venture', existing as Record<string, unknown>, r);
-    if (!removedCallOk) {
-      r.notes.push(`After failed remove: ${await nativePropertySnapshot('venture')}`);
+  for (const target of (((spec as { targets?: unknown[] }).targets ?? [])).map(String).filter(Boolean)) {
+    const tag =
+      (await logseq.Editor.getTag?.(target).catch(() => null)) ||
+      (await logseq.Editor.createTag?.(target).catch(() => null));
+    if (!tag) {
+      r.errors.push(`Could not resolve/create native #${target} tag; ${cleanName} reset aborted.`);
       return;
     }
-    r.actions.push('REMOVE native property definition: venture');
-    const removed = await waitForNativePropertyRemoval('venture');
-    r.notes.push(`After remove wait: ${await nativePropertySnapshot('venture')}`);
+    r.actions.push(`ENSURE native tag: #${target}`);
+  }
+
+  const captured = await capturePropertyValuesForLssObjects(cleanName);
+  r.notes.push(`Captured ${captured.length} existing LSS ${cleanName} value(s) before native property reset.`);
+
+  const existing = logseq.Editor.getProperty ? await logseq.Editor.getProperty(cleanName).catch(() => null) : null;
+  if (existing) {
+    const removedCallOk = await removeNativePropertyDefinition(cleanName, existing as Record<string, unknown>, r);
+    if (!removedCallOk) {
+      r.notes.push(`After failed remove: ${await nativePropertySnapshot(cleanName)}`);
+      return;
+    }
+    r.actions.push(`REMOVE native property definition: ${cleanName}`);
+    const removed = await waitForNativePropertyRemoval(cleanName);
+    r.notes.push(`After remove wait: ${await nativePropertySnapshot(cleanName)}`);
     if (!removed) {
-      r.errors.push('Native property venture still exists after removeProperty; reload Logseq and rerun lss:53.');
+      r.errors.push(`Native property ${cleanName} still exists after removeProperty; reload Logseq and rerun setup/reset.`);
       return;
     }
   } else {
-    r.notes.push('Native property venture did not exist before reset.');
+    r.notes.push(`Native property ${cleanName} did not exist before reset.`);
   }
 
   const ensured = await ensureNativeProperty(spec);
-  r.notes.push(`After recreate: ${await nativePropertySnapshot('venture')}`);
+  r.notes.push(`After recreate: ${await nativePropertySnapshot(cleanName)}`);
   if (ensured?.created) {
-    r.actions.push(`RECREATE native property: venture${ensured.note ? ` (${ensured.note})` : ''}`);
+    r.actions.push(`RECREATE native property: ${cleanName}${ensured.note ? ` (${ensured.note})` : ''}`);
   } else if (ensured?.skipped) {
-    r.notes.push(`RECREATE native property venture: ${ensured.note}`);
+    r.notes.push(`RECREATE native property ${cleanName}: ${ensured.note}`);
   } else {
-    r.errors.push('Failed to recreate native property: venture');
+    r.errors.push(`Failed to recreate native property: ${cleanName}`);
     return;
   }
 
@@ -438,17 +456,21 @@ export async function resetVentureNativeProperty(r: Result): Promise<void> {
     for (const item of captured) {
       const raw = propertyValueToRestoreString(item.value);
       if (!raw) continue;
-      const upsertValue = await resolveUpsertPropertyValue('venture', raw);
+      const upsertValue = await resolveUpsertPropertyValue(cleanName, raw);
       if (upsertValue == null || typeof upsertValue === 'string') {
-        r.notes.push(`SKIP restore venture on ${item.blockId}: could not resolve ${raw} to Venture page id`);
+        r.notes.push(`SKIP restore ${cleanName} on ${item.blockId}: could not resolve ${raw} to a target page id`);
         continue;
       }
-      await logseq.Editor.upsertBlockProperty(item.blockId, 'venture', upsertValue, { reset: true });
+      await logseq.Editor.upsertBlockProperty(item.blockId, cleanName, upsertValue, { reset: true });
       restored++;
     }
   }
-  r.actions.push(`RESTORE venture values after reset: ${restored}/${captured.length}`);
-  r.notes.push('After reload, the venture property should open as a DB node picker filtered to #Venture.');
+  r.actions.push(`RESTORE ${cleanName} values after reset: ${restored}/${captured.length}`);
+  r.notes.push(`After reload, ${cleanName} should open as a DB node picker filtered to its target tag(s).`);
+}
+
+export async function resetVentureNativeProperty(r: Result): Promise<void> {
+  await resetNativeNodeProperty(r, 'venture');
 }
 
 export async function removeNativeTagSchemaProperties(
