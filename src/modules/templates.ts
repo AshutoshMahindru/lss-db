@@ -13,7 +13,7 @@ import { entityIdentity, resolveUpsertPropertyValue } from '../core/db-propertie
 import { formatError, sleep } from '../core/runner';
 import { pageForCanonical, safeMarkdownRefs, safeTag, todayRef } from '../core/names';
 import type { Result } from '../core/types';
-import { normalizeAreaRef, objectByName, registry, templateNameFromRegistry } from '../registry';
+import { normalizeAreaRef, objectByName, propertySpec, registry, templateNameFromRegistry } from '../registry';
 import type { RegistryObject, RegistryTemplate } from '../registry/types';
 import { legacyTemplateText } from './contracts';
 import {
@@ -78,19 +78,34 @@ export function uniqueObjectProps(o: RegistryObject): string[] {
   return out;
 }
 
+export function placeholderNodePropertyValue(prop: string, spec: { targets?: unknown[] } | undefined): string {
+  const target = (spec?.targets ?? [])
+    .map(String)
+    .map((value) => safeTag(value))
+    .find((value) => value && !value.includes('/'));
+  return `[[LSS Placeholder/${target || prop}]]`;
+}
+
 export function defaultPropertyValue(prop: string, o: RegistryObject): string {
   const p = String(prop);
-  const area = pageForCanonical(normalizeAreaRef(o.area));
+  if (Object.prototype.hasOwnProperty.call(o.defaultValues ?? {}, p)) {
+    const value = o.defaultValues?.[p];
+    return value == null ? '' : String(value);
+  }
+  const area = normalizeAreaRef(o.area);
   if (p === 'area' || p === 'areas') return `[[${area}]]`;
   if (p === 'status') return safeTag(o.tag) === 'ActionItem' ? 'Todo' : 'active';
+  if (p === 'Status') return 'Todo';
   if (p === 'priority' || p === 'Priority') return safeTag(o.tag) === 'ActionItem' ? 'Medium' : 'medium';
   if (['date', 'captured-on', 'asked-on', 'decided-on', 'start-date', 'review-date', 'created-on'].includes(p)) {
     // Plain date string (no brackets) for better visibility on DB graphs
     return todayRef().replace(/^\[\[|\]\]$/g, '');
   }
+  if (['Deadline', 'deadline', 'due-date', 'Scheduled'].includes(p)) return todayRef().replace(/^\[\[|\]\]$/g, '');
   if (p === 'Deadline' || p === 'deadline') return '';
   if (p === 'confidentiality') return 'internal';
-  if (p === 'owner') return '';
+  const spec = propertySpec(p);
+  if (String(spec?.type ?? '').toLowerCase() === 'node') return placeholderNodePropertyValue(p, spec as { targets?: unknown[] } | undefined);
   return '';
 }
 
@@ -107,6 +122,8 @@ function templateProperties(t: RegistryTemplate): TemplateProperty[] {
   const seen = new Set<string>();
 
   if (obj) {
+    out.push({ key: 'lss-object-type', value: obj.name });
+    seen.add('lss-object-type');
     for (const key of uniqueObjectProps(obj)) {
       if (seen.has(key.toLowerCase())) continue;
       out.push({ key, value: defaultPropertyValue(key, obj) });
@@ -241,6 +258,15 @@ async function upsertTemplateProperty(
   }
 }
 
+async function ensureTemplatePlaceholderPage(result: Result, value: string): Promise<void> {
+  const match = String(value ?? '').match(/\[\[(LSS Placeholder\/[^\]]+)\]\]/);
+  if (!match?.[1]) return;
+  await ensurePage(result, match[1], {
+    'lss-kind': 'Template Placeholder',
+    'lss-status': 'placeholder',
+  });
+}
+
 async function removeTemplateProperty(
   result: Result,
   rootBlockId: string,
@@ -308,6 +334,7 @@ async function syncTemplateStructure(result: Result, rootBlockId: string, t: Reg
   // This keeps the template definition clean; properties come from RegistryObject.
   const properties = templateProperties(t);
   for (const prop of properties) {
+    await ensureTemplatePlaceholderPage(result, prop.value);
     await upsertTemplateProperty(result, rootBlockId, prop.key, prop.value, displayName);
   }
 

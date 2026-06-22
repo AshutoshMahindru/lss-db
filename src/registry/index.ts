@@ -26,9 +26,14 @@ export function allTags(): string[] {
   return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b));
 }
 
+export function canCreateNativeDbTag(tag: string): boolean {
+  const clean = safeTag(tag);
+  return Boolean(clean) && !clean.includes('/') && !isLogseqBuiltinTag(clean);
+}
+
 /** LSS class tags that can be created/configured in DB setup (excludes Logseq built-ins). */
 export function nativeDbClassTags(): string[] {
-  return allTags().filter((tag) => !isLogseqBuiltinTag(tag));
+  return allTags().filter(canCreateNativeDbTag);
 }
 
 export function propertySpec(name: string) {

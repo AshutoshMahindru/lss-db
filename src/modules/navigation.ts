@@ -1,6 +1,7 @@
 import { MODE, VERSION } from '../config';
 import { appendManagedBlock, ensurePage } from '../core/editor';
 import { safePageName, safeRef } from '../core/names';
+import { registryCreationCommands } from '../commands/registry-create';
 import type { Result } from '../core/types';
 import {
   allTags,
@@ -46,7 +47,7 @@ export const COMMAND_HELP: CommandHelpLine[] = [
   { id: '31', label: 'lss: 31insert-word-extender', description: 'Insert a Word Extender starter block at cursor.' },
   { id: '32', label: 'lss: 32insert-dashboard-section', description: 'Insert generic dashboard sections at cursor.' },
   { id: '33', label: 'lss: 33audit-current-page', description: 'Audit the current page.' },
-  { id: '34', label: 'lss: 34audit-graph', description: 'Run graph-level verification and registry-count report.' },
+  { id: '34', label: 'lss: 34audit-graph', description: 'Run graph-level verification, registry counts, and native tag schema pollution summary.' },
   { id: '35', label: 'lss: 35insert-venture-dashboard', description: 'Insert Venture dashboard with working queries at cursor.' },
   { id: '36', label: 'lss: 36insert-project-dashboard', description: 'Insert Project dashboard with working queries at cursor.' },
   { id: '37', label: 'lss: 37insert-area-dashboard', description: 'Insert Area dashboard with working queries at cursor.' },
@@ -62,11 +63,27 @@ export const COMMAND_HELP: CommandHelpLine[] = [
   { id: '47', label: 'lss: 47create-command-list-page', description: 'Create/update LSS Command List with the active command surface.' },
   { id: '48', label: 'lss: 48create-layer-home-pages', description: 'Create/update one home page per LSS layer with backlinks to all pages in that layer.' },
   { id: '49', label: 'lss: 49add-layer-links-to-home', description: 'Add backlinks to all LSS layer home pages on [[Home]].' },
-  { id: '50', label: 'lss: 50repair-current-page', description: 'Recovery tool: materialize journal entity blocks, promote page tags/properties, and fix dashboard queries.' },
+  { id: 'materialise', label: 'lss: materialise page', description: 'Primary workflow: materialize the current tagged page, consume instance hints, write properties, and repair layout/query sections.' },
   { id: '51', label: 'lss: 51diagnose-current-page', description: 'Diagnose current-page DB tag, property, and query state.' },
   { id: '52', label: 'lss: 52new-function', description: 'Create a placeholder Function page.' },
   { id: '53', label: 'lss: 53reset-venture-property', description: 'Reset stale native venture property schema to a DB node picker targeting #Venture. Aliases: lss53, lss:53reset-venture-property.' },
+  { id: '54', label: 'lss: 54clean-native-tag-schema-properties', description: 'Remove LSS registry schema properties from native tag property lists and write a concise cleanup report.' },
 ];
+
+export function registryCommandHelp(): CommandHelpLine[] {
+  const existing = new Set(COMMAND_HELP.map((command) => command.label));
+  return registryCreationCommands()
+    .filter((command) => !existing.has(command.label))
+    .map((command, index) => ({
+      id: `registry-${index + 1}`,
+      label: command.label,
+      description: command.description,
+    }));
+}
+
+export function allCommandHelp(): CommandHelpLine[] {
+  return [...COMMAND_HELP, ...registryCommandHelp()];
+}
 
 export function commandListBody(): string {
   return [
@@ -74,7 +91,7 @@ export function commandListBody(): string {
     `mode:: ${MODE}`,
     `plugin-version:: ${VERSION}`,
     '',
-    ...COMMAND_HELP.map((c) => `- ${c.label} — ${c.description}`),
+    ...allCommandHelp().map((c) => `- ${c.label} — ${c.description}`),
   ].join('\n');
 }
 
@@ -408,7 +425,7 @@ export async function createSimplePageTreePage(r: Result): Promise<void> {
 
 export async function createCommandListPage(r: Result): Promise<void> {
   await ensurePage(r, 'LSS Command List');
-  await appendManagedBlock(r, 'LSS Command List', `${MODE}-command-list-v${VERSION}`, commandListBody());
+  await appendManagedBlock(r, 'LSS Command List', `${MODE}-command-list-v${VERSION}-registry-create-v1`, commandListBody());
 }
 
 export async function createLayerHomePages(r: Result): Promise<void> {
@@ -434,19 +451,20 @@ export async function createHelpPage(r: Result): Promise<void> {
     'Use the commands in order. For setup, either run `lss: 1setup-all` or run `lss: 2setup-bootstrap` through `lss: 13verify-schema` step by step.',
     '',
     '## Commands',
-    ...COMMAND_HELP.map((c) => `- ${c.label} — ${c.description}`),
+    ...allCommandHelp().map((c) => `- ${c.label} — ${c.description}`),
     '',
     '## Notes',
     '- Commands 14-22 create placeholder pages. Rename them after review.',
     '- Commands 23-32 insert blocks at the active cursor. Run them from an empty block.',
+    '- Registry-backed commands such as `lss: new-regime`, `lss: new-term`, and `lss: insert-event` cover every entity, word-extender, and form type in `src/registry/data.json`.',
     '- Commands 33-44 update, audit, export, or snapshot existing pages.',
     '- Commands 46-49 create navigation, area-model, command-list, and layer-home pages.',
-    '- Command 50 repairs the current page (promote properties/tags, fix dashboard queries).',
+    '- `lss: materialise page` is the primary page materialization and repair command.',
     '- Commands intentionally use flat-safe scaffold page names to avoid namespace parent errors.',
     '- Spec aliases such as `LSS: Initialize Schema` map to the same handlers as numbered commands.',
   ].join('\n');
   await ensurePage(r, helpPage);
-  await appendManagedBlock(r, helpPage, `${MODE}-command-help-v${VERSION}`, body);
+  await appendManagedBlock(r, helpPage, `${MODE}-command-help-v${VERSION}-registry-create-v1`, body);
 }
 
 // Re-export page tree from contracts for step12 compatibility

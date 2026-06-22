@@ -1,7 +1,9 @@
 import { TITLE, VERSION } from '../config';
 import { run } from '../core/runner';
+import { registryCreationCommands } from './registry-create';
 import { auditCurrentPage, auditGraph } from '../modules/audit';
 import {
+  insertRegistryFormBlock,
   insertActionItem,
   insertDashboardSection,
   insertDecision,
@@ -12,6 +14,7 @@ import {
   insertQuestion,
   insertReview,
   insertWordExtender,
+  newRegistryPage,
   newCondition,
   newDocument,
   newFunction,
@@ -38,7 +41,12 @@ import {
   createSimplePageTreePage,
 } from '../modules/navigation';
 import { diagnoseCurrentPage } from '../modules/diagnose';
-import { isAutoRepairEnabled, registerAutoRepairHooks, registerAutoRepairSettings } from '../modules/auto-repair';
+import {
+  isAutoRepairEnabled,
+  registerAutoRepairHooks,
+  registerAutoRepairSettings,
+  scheduleCurrentPageAutoRepair,
+} from '../modules/auto-repair';
 import { repairCurrentPage } from '../modules/repair';
 import {
   maintInitializeSchema,
@@ -58,10 +66,15 @@ import {
   stepPageTree,
   stepVerify,
 } from '../modules/setup';
+import { cleanNativeTagSchemaProperties } from '../modules/native-tag-cleanup';
 
 type Handler = (r: import('../core/types').Result) => Promise<void>;
 
+const registeredLabels = new Set<string>();
+
 function register(label: string, fn: Handler): void {
+  if (registeredLabels.has(label)) return;
+  registeredLabels.add(label);
   logseq.Editor.registerSlashCommand(label, () => run(label, fn));
 }
 
@@ -72,6 +85,16 @@ function registerAlias(alias: string, numberedLabel: string, fn: Handler): void 
 
 function registerAliases(labels: string[], fn: Handler): void {
   for (const label of labels) register(label, fn);
+}
+
+function registerRegistryCreationCommands(): void {
+  for (const command of registryCreationCommands()) {
+    const handler =
+      command.kind === 'form'
+        ? insertRegistryFormBlock(command.objectName)
+        : newRegistryPage(command.objectName);
+    registerAliases(command.labels, handler);
+  }
 }
 
 export function registerCommands(): void {
@@ -131,7 +154,7 @@ export function registerCommands(): void {
   register('lss: 47create-command-list-page', createCommandListPage);
   register('lss: 48create-layer-home-pages', createLayerHomePages);
   register('lss: 49add-layer-links-to-home', addLayerLinksToHome);
-  register('lss: 50repair-current-page', repairCurrentPage);
+  register('lss: materialise page', repairCurrentPage);
   register('lss: 51diagnose-current-page', diagnoseCurrentPage);
   registerAlias('LSS: New Function', 'lss: 52new-function', newFunction);
   registerAliases(
@@ -144,13 +167,29 @@ export function registerCommands(): void {
     ],
     resetVentureNativeProperty,
   );
+  registerAliases(
+    [
+      'lss: 54clean-native-tag-schema-properties',
+      'lss:54clean-native-tag-schema-properties',
+      'lss54',
+      'lss 54',
+      'LSS: Clean Native Tag Schema Properties',
+    ],
+    cleanNativeTagSchemaProperties,
+  );
 
   // Additional spec aliases that map to existing handlers
   register('LSS: Initialize Schema (step-by-step)', maintInitializeSchema);
   register('LSS: Verify Schema (report only)', maintVerifySchema);
+  registerRegistryCreationCommands();
 
   registerAutoRepairSettings();
   registerAutoRepairHooks();
+  for (const delayMs of [1200, 3000, 6000, 10000, 15000]) {
+    setTimeout(() => {
+      void scheduleCurrentPageAutoRepair();
+    }, delayMs);
+  }
 
   logseq.UI.showMsg(
     `${TITLE} plugin ${VERSION} loaded. Auto-sync ${isAutoRepairEnabled() ? 'enabled' : 'disabled'}; manual repair is available.`,

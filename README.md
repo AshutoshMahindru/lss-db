@@ -1,4 +1,4 @@
-# LSS DB Final Plugin v2.0.0
+# LSS DB Final Plugin v2.0.12
 
 Modular TypeScript rewrite of the LSS DB Final plugin. The monolithic `index.ts` has been split into focused modules under `src/` while keeping the full `registry.json` build-pack unchanged.
 
@@ -13,8 +13,20 @@ src/
     contracts.ts         schema contract text generators
     setup.ts             commands 1-13
     create.ts            commands 14-32 plus lss:52 Function page creation
-    queries.ts           dashboard/advanced query builders (DB advanced query blocks with Logseq DSL payloads)
-    repair.ts            materialize journal entity blocks, promote page tags/properties, dashboard query repair
+    queries.ts           public facade re-exporting the split query modules
+    query-builders.ts    dashboard/simple/advanced query builders with current-page fallbacks
+    query-edn.ts         query content normalization, equivalence, and repair drift checks
+    query-probes.ts      Datascript probe helpers for dashboard/query diagnostics
+    dashboard-query-repair.ts query-block discovery, content reads, scoring, and canonical selection
+    dashboard-query-views.ts registry/template view derivation for dashboard sections
+    advanced-query-blocks.ts Logseq DB /Advanced Query adapter: host-scope setup, query child inspection, structure repair
+    repair.ts            materialize journal entity blocks, promote page tags/properties
+    repair-dashboard.ts  dashboard query repair runner and linked parent dashboard refresh
+    diagnose.ts          current-page diagnostic report assembly
+    diagnose-journal.ts  journal materialization status diagnostics
+    diagnose-native-tags.ts native tag schema pollution diagnostics
+    diagnose-query-probes.ts live query and Datascript probe helpers for diagnostics
+    native-tag-cleanup.ts dedicated native tag schema cleanup command
     audit.ts             structured page audit (ERROR/WARNING/INFO) using RegistryObject required props
     migration.ts         dry-run normalize, relationship conversion, and namespaced migration plans
     dashboard.ts         insert dashboards with DB advanced-query blocks
@@ -28,7 +40,10 @@ src/
 
 - Setup/install commands come first (1-13).
 - Creation and insertion commands come next (14-32), with `lss: 52new-function` added for the missing Function page entity.
-- Maintenance/update commands come last (33-52).
+- Registry-backed creation aliases cover every `entityTypes`, `formTypes`, and `wordExtenderTypes` entry without renumbering the stable command set:
+  - `lss: new-regime`, `lss: new-financial-asset`, `lss: new-term`, etc. create placeholder pages.
+  - `lss: insert-event`, `lss: insert-weekly-review`, `lss: insert-work-stream-update`, etc. insert form blocks at the cursor.
+- Maintenance/update commands come last (33-54), plus the primary materialization command.
 - Numbered `lss:` commands and human-readable `LSS:` aliases map to the same handlers.
 - Scaffold/control pages use flat-safe names (`Area/Cross-Cutting` → `Area - Cross-Cutting`) and store canonical slash names as metadata.
 
@@ -37,7 +52,7 @@ src/
 1. DB dashboard queries use native advanced-query blocks with Logseq DSL payloads, class tag filters, and current-page relationship property filters.
 2. Multi-tag and multi-property dashboard views use `or` semantics, so sections like Outputs and People do not require every possible tag/property at once.
 3. `lss: 38normalize-properties`, `lss: 39convert-text-relationships`, and `lss: 40migrate-namespaced-objects` now write dry-run plans to `LSS Migrations` instead of mutating content immediately.
-4. `lss: 50repair-current-page` materializes LSS entity-tagged journal blocks into entity pages, ensures page-root properties from the RegistryObject tag, and repairs dashboard queries.
+4. `lss: materialise page` materializes tagged LSS pages or journal captures into entity pages, ensures page-root properties from the RegistryObject tag, and repairs dashboard queries.
 
 ## Runtime safety
 
@@ -54,14 +69,15 @@ The detailed operating model is documented in [docs/LSS_DB_WHITE_PAPER.md](docs/
 **RegistryObject defines canonical properties, and entity pages are where those properties are materialized.**
 
 - `requiredProperties` + `properties` on an object type in `src/registry/data.json` define the schema.
-- Creation (`new-venture`, `new-function`, etc.), repair (`lss:50`), and native template installation all call `uniqueObjectProps(obj)` and `defaultPropertyValue(...)` sourced **only** from the matching RegistryObject.
+- Creation (`new-venture`, `new-function`, etc.), materialization (`lss: materialise page`), and native template installation all call `uniqueObjectProps(obj)` and `defaultPropertyValue(...)` sourced **only** from the matching RegistryObject.
 - `lss-object-type::` is still written for compatibility/fallback detection, but the authoritative classifier on DB graphs is the class **#tag** (e.g. `#Function`, `(tags "Function")`).
 - **Templates never contribute property schema.** `RegistryTemplate.body` contains only:
   - The root title line
   - Structural section headings (for requiredSections + dashboard query insertion)
 - Any `foo::` lines that used to live inside template bodies have been stripped. The data.json `decisions` record this rule explicitly (`tagIsSolePropertySchemaSource`, `templateBodyIsLayoutAndSectionsOnly`).
 - Native Logseq tag properties are not used for LSS entity schema fields. Setup removes entity schema properties from native tags so tagging a journal block does not display schema fields on the journal page.
-- Old instances get the full set of properties ensured on next repair, and polluted journal capture blocks can be materialized and cleaned by `lss:50`.
+- Old instances get the full set of properties ensured on next materialization, and polluted journal capture blocks can be materialized and cleaned by `lss: materialise page`.
+- Repair writes schema values as native page properties and cleans visible schema property lines from page/block bodies instead of maintaining duplicate `prop::` mirror blocks.
 
 Rationale: avoids duplication, keeps tags as class labels, keeps templates as pure "layout + query" scaffolds, and prevents native tag properties from appearing on journal capture blocks.
 
@@ -108,14 +124,15 @@ lss: 49add-layer-links-to-home
 - `LSS: Audit Current Page` → `lss: 33audit-current-page`
 - `LSS: Insert Venture Dashboard` → `lss: 35insert-venture-dashboard`
 - `LSS: Normalize Properties` → `lss: 38normalize-properties`
-- `LSS: Repair Current Page` is available as `lss: 50repair-current-page`
+- `LSS: Materialise Page` → `lss: materialise page`
 - `LSS: New Function` → `lss: 52new-function`
+- `LSS: Clean Native Tag Schema Properties` → `lss: 54clean-native-tag-schema-properties`
 
 ## Template note
 
 Templates are layout-only (sections + query children). `Apply template to tags` is disabled for DB entity templates so tagging a journal block does not make that journal block the entity. Properties are injected onto the entity page root from the RegistryObject that matches the `appliesTo` tag.
 
-For template setup, open `LSS Native Templates`, create an empty block, click inside it, and run `lss: 8setup-templates`. Re-run to remove old tag-applied template settings and re-sync missing structure/query children. If an entity was tagged on a journal page, run `lss: 50repair-current-page` on that journal; it will create/update the entity page and replace the journal tag block with a page link.
+For template setup, open `LSS Native Templates`, create an empty block, click inside it, and run `lss: 8setup-templates`. Re-run to remove old tag-applied template settings and re-sync missing structure/query children. If an entity was tagged on a journal page, run `lss: materialise page` on that journal; it will create/update the entity page and replace the journal tag block with a page link.
 
 ## Build
 
@@ -124,11 +141,11 @@ The repo includes a public-registry `package-lock.json` and `.npmrc`.
 ```bash
 npm ci
 npm run build
-npm run package   # optional release zip
+npm run package   # optional zip of the root plugin contents
 ```
 
-Load the plugin from the project directory in Logseq (Developer mode → Load unpacked plugin).
+Load the plugin from `/Users/ashutoshmahindru/Documents/LSS-DB` in Logseq (Developer mode → Load unpacked plugin). The repo root is the plugin folder; `release/` is only for an optional zip artifact.
 
 ## Build status
 
-v2.0.0 modular rewrite — TypeScript modules with registry-driven queries, audit, and repair.
+v2.0.12 date materialise fix — DB date properties resolve to journal page entity ids instead of raw journal-day numbers.

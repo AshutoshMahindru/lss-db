@@ -39,7 +39,7 @@ export async function insertDashboard(r: Result, kind: string): Promise<void> {
   await insertAtCursor(r, dashboardBody(kind), `${kind} dashboard`);
   // Proactively install working advanced query blocks for DB graphs.
   // Uses tag-based clauses + proper #Query + :code child structure.
-  // Multiple attempts + auto-repair backup means manual lss:50 is rarely required.
+  // Multiple attempts + auto-repair backup means manual lss: materialise page is rarely required.
   try {
     await sleep(150);
     const pageName = await currentPageName();

@@ -1,4 +1,3 @@
-import { THROTTLE_MS } from '../config';
 import {
   canonicalPropertyKey,
   entityIdentity,
@@ -17,7 +16,7 @@ import {
 } from '../core/db-properties';
 import { defaultPropertyValue, uniqueObjectProps } from './templates';
 import { objectByName } from '../registry';
-import { enterRepairSession, exitRepairSession, markRepairCooldown, scheduleAutoRepair } from './auto-repair';
+import { enterRepairSession, exitRepairSession, markRepairCooldown } from './auto-repair';
 import {
   blockId,
   currentPageName,
@@ -35,28 +34,25 @@ import { formatError, sleep } from '../core/runner';
 import { fixPhantomTagParenSyntax, looksLikeUuid, safePageName, safeTag, tsKey, visiblePageLabel } from '../core/names';
 import type { Result } from '../core/types';
 import type { RegistryObject } from '../registry/types';
-import { allObjects, dashboardPageForObjectType, propertySpec, templateDefByObjectType } from '../registry';
+import { allObjects, propertySpec, templateDefByObjectType } from '../registry';
+import { applyInstanceHintTagsToProps, harvestInlineTags, isInstanceHintTag } from './repair-hints';
+import { relationshipPropertyNames, sectionNameFromLine } from './queries';
 import {
-  configureDbAdvancedQueryBlock,
-  recreateDbAdvancedQueryBlock,
-  forceCreateQueryChild,
-  resolveQueryClassTagId,
-  dashboardQueryBlockForViewAsync,
-  dbAdvancedQueryBlockNeedsStructureRepair,
-  filterProps,
-  findAllQueryBlocksInSectionAsync,
-  inspectDbQueryBlockStructure,
-  isAdvancedQueryBlockContent,
-  isQueryLikeContent,
-  pickCanonicalQueryBlock,
-  queryBlockNeedsRepair,
-  readDashboardQueryBlockContent,
-  repairDbQueryBlockUiKeywords,
-  relationshipPropertyNames,
-  sectionNameFromLine,
-  viewDefinitionsSafe,
-} from './queries';
+  repairDashboardQueries as repairDashboardQueriesWithInference,
+  repairLinkedParentDashboards,
+} from './repair-dashboard';
+import { applyIncomingSourceTagsForPage } from './repair-source-tags';
+import { materializeTemplateSections } from './repair-template';
+import {
+  cleanForeignPluginPropertyCopies,
+  isForeignPluginRegistryPropertyKey,
+  isPluginOwnedRegistryPropertyKey,
+  readDatascriptUserPropertyValue,
+} from './repair-user-properties';
+import { pageLooksMaterializable, recentTaggedLssPageFallback } from './repair-current-page';
+import { ensureMaterialiseNativeProperties } from './repair-native-properties';
 import { removeNativeTagSchemaProperties } from './setup';
+import { upsertBlockPropertyViaHost } from './advanced-query-blocks';
 
 function repairPropertyLines(content: string): Array<{ property: string; value: string }> {
   const lines: Array<{ property: string; value: string }> = [];
@@ -137,22 +133,6 @@ function harvestInlineLssClassTags(blocks: any[]): Set<string> {
     }
   }
   return tags;
-}
-
-function isPropertiesListBlock(content: string, schemaProps: Set<string>): boolean {
-  const text = String(content ?? '').trim();
-  if (!text) return false;
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  if (lines.length === 0) return false;
-  let propCount = 0;
-  for (const line of lines) {
-    if (/::/.test(line) && Array.from(schemaProps).some((k) => line.toLowerCase().startsWith(k.toLowerCase() + '::') || line.toLowerCase().startsWith(k.toLowerCase() + ' ::'))) {
-      propCount++;
-    }
-  }
-  const ratio = propCount / lines.length;
-  const coverage = Array.from(schemaProps).filter((k) => text.toLowerCase().includes(k.toLowerCase() + '::')).length;
-  return ratio >= 0.6 || coverage >= Math.min(2, schemaProps.size);
 }
 
 function canonicalObjectTypeToken(token: string): string | null {
@@ -689,7 +669,7 @@ async function upsertBlockPropertyWithRetry(
       lastError = error;
       const msg = formatError(error);
       // Date schema errors ("should be a journal date") are non-recoverable by retrying the same value.
-      // Let the caller decide (we now pass correct journal-day ints).
+      // Let the caller decide (we resolve date values to journal page entity ids before writing).
       if (/journal date|invalid value|should be a/i.test(msg)) {
         throw error;
       }
@@ -703,7 +683,57 @@ async function upsertBlockPropertyWithRetry(
   throw lastError;
 }
 
+function isDeferredPropertyUpsertError(error: unknown): boolean {
+  return /deferred timeout|async call|timeout/i.test(formatError(error));
+}
+
+async function upsertPagePropertyReliable(
+  result: Result,
+  pageBlockId: string,
+  shortKey: string,
+  upsertValue: unknown,
+  opts?: { reset?: boolean },
+  preferHost = false,
+): Promise<'editor' | 'host'> {
+  let editorError: unknown;
+  if (preferHost) {
+    const host = await upsertBlockPropertyViaHost(pageBlockId, shortKey, upsertValue, opts);
+    if (host.ok) {
+      result.notes.push(`Used host API for DB node page property ${shortKey}.`);
+      return 'host';
+    }
+    editorError = new Error(`host first attempt failed: ${host.error ?? 'unknown error'}`);
+  }
+
+  if (logseq.Editor.upsertBlockProperty) {
+    try {
+      await upsertBlockPropertyWithRetry(pageBlockId, shortKey, upsertValue, opts);
+      return 'editor';
+    } catch (error) {
+      editorError = error;
+      const msg = formatError(error);
+      if (/journal date|invalid value|should be a/i.test(msg) || !isDeferredPropertyUpsertError(error)) {
+        throw error;
+      }
+    }
+  } else {
+    editorError = new Error('upsertBlockProperty API unavailable');
+  }
+
+  const host = await upsertBlockPropertyViaHost(pageBlockId, shortKey, upsertValue, opts);
+  if (host.ok) {
+    result.notes.push(`Used host API fallback for page property ${shortKey} after plugin iframe upsert timeout.`);
+    return 'host';
+  }
+
+  throw new Error(
+    `${formatError(editorError)}; host fallback failed: ${host.error ?? 'unknown error'}`,
+  );
+}
+
 async function readCurrentBlockProperty(pageBlockId: string, shortKey: string): Promise<unknown> {
+  const userValue = await readDatascriptUserPropertyValue(pageBlockId, shortKey);
+  if (userValue !== undefined) return userValue;
   if (RELATIONSHIP_PROPERTIES.has(shortKey)) {
     const rel = await readRelationshipPropertyValue(pageBlockId, shortKey);
     if (rel !== undefined) return rel;
@@ -711,6 +741,7 @@ async function readCurrentBlockProperty(pageBlockId: string, shortKey: string): 
   const readFrom = (props: Record<string, unknown> | null | undefined): unknown => {
     if (!props) return undefined;
     for (const [key, value] of Object.entries(props)) {
+      if (isForeignPluginRegistryPropertyKey(key)) continue;
       if (canonicalPropertyKey(key) === shortKey) return value;
     }
     return undefined;
@@ -814,6 +845,7 @@ async function readDbPagePropertyMap(
     if (!src) continue;
     for (const [key, value] of Object.entries(src)) {
       if (key === 'tags' || canonicalPropertyKey(key) === 'tags') continue;
+      if (isPluginOwnedRegistryPropertyKey(key) || isForeignPluginRegistryPropertyKey(key)) continue;
       const shortKey = canonicalPropertyKey(key);
       const str = await dbPropertyValueToRepairString(result, shortKey, value);
       if (str) map.set(shortKey, str);
@@ -859,14 +891,18 @@ async function gatherPageRepairState(
   pageBlockId: string,
   page: any,
   blocks: any[],
-): Promise<{ props: Map<string, string>; tags: Set<string> }> {
+): Promise<{ props: Map<string, string>; tags: Set<string>; instanceHints: Set<string> }> {
   const props = new Map<string, string>();
   const tags = new Set<string>();
+  const instanceHints = new Set<string>();
 
   for (const block of walkBlocks(blocks)) {
     for (const line of repairPropertyLines(block?.content)) {
       if (line.property === 'tags') {
-        for (const tag of repairTagsFromValue(line.value)) tags.add(tag);
+        for (const tag of repairTagsFromValue(line.value)) {
+          if (canonicalObjectTypeToken(tag)) tags.add(tag);
+          else if (isInstanceHintTag(tag)) instanceHints.add(tag);
+        }
       } else if (!props.has(line.property)) {
         props.set(line.property, line.value);
       }
@@ -878,6 +914,10 @@ async function gatherPageRepairState(
   for (const t of harvestInlineLssClassTags(blocks)) {
     tags.add(t);
   }
+  for (const t of harvestInlineTags(blocks)) {
+    if (canonicalObjectTypeToken(t)) tags.add(t);
+    else if (isInstanceHintTag(t)) instanceHints.add(t);
+  }
 
   const dbProps = await readDbPagePropertyMap(result, pageName, pageBlockId);
   for (const [key, value] of dbProps) {
@@ -885,9 +925,14 @@ async function gatherPageRepairState(
   }
 
   const dbTags = await readDbPageTags(result, pageBlockId, page);
-  for (const tag of dbTags) tags.add(tag);
+  for (const tag of dbTags) {
+    if (canonicalObjectTypeToken(tag)) tags.add(tag);
+    else if (isInstanceHintTag(tag)) instanceHints.add(tag);
+  }
 
-  return { props, tags };
+  await applyIncomingSourceTagsForPage(result, pageName, pageBlockId, page, tags, instanceHints);
+
+  return { props, tags, instanceHints };
 }
 
 async function inferObjectTypeForPage(
@@ -957,17 +1002,23 @@ async function repairPageCore(
   label: string,
 ): Promise<{ objectType: string | null; repaired: number; linked: number; resolvedTags: Set<string>; props: Map<string, string> }> {
   const page = await getPage(pageName);
-  const { props, tags } = await gatherPageRepairState(result, pageName, pageBlockId, page, blocks);
-  const inferredType = await inferObjectTypeForRepairPage(pageName, pageBlockId, blocks, tags, props, result);
-
+  const { props, tags, instanceHints } = await gatherPageRepairState(result, pageName, pageBlockId, page, blocks);
+  const hintedType = typeHint ? canonicalObjectTypeToken(typeHint) : null;
+  if (typeHint && !hintedType) result.errors.push(`Repair ${label}: unknown LSS type hint ${typeHint}`);
+  if (hintedType) {
+    const obj = objectByName(hintedType);
+    const tag = safeTag(obj?.tag ?? hintedType);
+    if (tag) tags.add(tag);
+    props.set('lss-object-type', hintedType);
+    result.notes.push(`Using lss-object-type:: ${hintedType} from repair type hint.`);
+  }
+  const inferredType = hintedType ?? (await inferObjectTypeForRepairPage(pageName, pageBlockId, blocks, tags, props, result));
   // === TAG IS SOLE SCHEMA SOURCE (post "bigger pass" cleanup) ===
-  // After inferring type from the (primary) tag, ensure every property declared
-  // on the RegistryObject is present on the instance. Templates no longer contribute
-  // any property schema lines (bodies stripped + logic ignores body for props).
-
   if (inferredType) {
     const obj = objectByName(inferredType);
     if (obj) {
+      await ensureMaterialiseNativeProperties(result, obj);
+      await applyInstanceHintTagsToProps(result, obj, props, instanceHints, pageName);
       for (const key of uniqueObjectProps(obj)) {
         if (String(props.get(key) ?? '').trim()) {
           result.actions.push(`SKIP canonical property already present from #${inferredType}: ${key}`);
@@ -1018,32 +1069,26 @@ async function repairPageCore(
       }
     }
   }
-
-  // Hoist schemaProps + propLines (for clean skipping + list visibility ensure).
-  // RegistryObject defines the schema; the list is derived for visibility on the entity page root only.
+  // RegistryObject defines the schema; repair materializes those values as page properties,
+  // not as visible schema property mirror blocks.
   const schemaProps = new Set<string>();
+  const requiredProps = new Set<string>();
+  const schemaNodeProps = new Set<string>();
   if (inferredType) {
     const obj = objectByName(inferredType);
     if (obj) {
-      for (const k of uniqueObjectProps(obj)) schemaProps.add(k);
+      for (const k of uniqueObjectProps(obj)) {
+        schemaProps.add(k);
+        if (String(propertySpec(k)?.type ?? '').toLowerCase() === 'node') schemaNodeProps.add(canonicalPropertyKey(k));
+      }
+      for (const k of obj.requiredProperties ?? []) requiredProps.add(canonicalPropertyKey(k));
     }
   } else {
     for (const o of allObjects()) {
       for (const k of uniqueObjectProps(o)) schemaProps.add(k);
     }
   }
-  let propLines = '';
-  if (inferredType) {
-    const obj = objectByName(inferredType);
-    if (obj) {
-      propLines = uniqueObjectProps(obj)
-        .map((key) => {
-          const val = props.get(key) || defaultPropertyValue(key, obj) || '';
-          return `${key}:: ${val}`;
-        })
-        .join('\n');
-    }
-  }
+  await cleanForeignPluginPropertyCopies(result, pageName, pageBlockId, new Set([...schemaProps].map(canonicalPropertyKey)));
 
   const resolvedTags = await repairResolveTagSet(result, tags);
   for (const tag of resolvedTags) await repairApplyTagToPage(result, pageBlockId, tag);
@@ -1055,9 +1100,12 @@ async function repairPageCore(
       return aDate - bDate;
     });
   for (const [prop, value] of propEntries) {
-    await repairUpsertPageProperty(result, pageBlockId, prop, value);
-    if (isDateProperty(prop)) {
-      await sleep(100);
+    const changed = await repairUpsertPageProperty(result, pageBlockId, prop, value, {
+      preserveEmpty: requiredProps.has(canonicalPropertyKey(prop)),
+      materializeEmptyNode: schemaNodeProps.has(canonicalPropertyKey(prop)),
+    });
+    if (changed && isDateProperty(prop)) {
+      await sleep(20);
       if (await isDbGraph()) {
         // Always try to clean [[date]] in content lines on DB so the date text is directly visible
         for (const b of walkBlocks(blocks)) {
@@ -1066,15 +1114,12 @@ async function repairPageCore(
       }
     }
   }
+  await cleanForeignPluginPropertyCopies(result, pageName, pageBlockId, new Set([...schemaProps].map(canonicalPropertyKey)));
 
-  // Clean schema prop lines from content for LSS objects/blocks (so properties are only page properties via upsert, not visible in content or on journal).
-  // Skip pure properties-list blocks so the visibility list on entity pages is preserved.
+  // Clean schema prop lines from content for LSS objects/blocks so canonical values live only as page properties.
   if (schemaProps.size > 0) {
     for (const block of walkBlocks(blocks)) {
       const c = String(block?.content ?? '');
-      if (isPropertiesListBlock(c, schemaProps)) {
-        continue;
-      }
       let content = c;
       const original = content;
       for (const key of schemaProps) {
@@ -1090,32 +1135,19 @@ async function repairPageCore(
     }
   }
 
-  // For LSS entity pages, ensure/refresh the visible schema properties list (prop:: lines) derived from the tag.
-  // We skip these blocks in clean (so they survive) and here we create or update the list block so
-  // properties are visible on the entity page (as page props + list) and never on journals (cleaned).
-  if (inferredType && propLines && logseq.Editor.appendBlockInPage) {
-    await sleep(50);
-    let freshBlocks = await getBlocks(pageName);
-    if (!freshBlocks?.length) freshBlocks = blocks;
-    let existingListId: string | null = null;
-    for (const b of walkBlocks(freshBlocks)) {
-      if (isPropertiesListBlock(String(b?.content ?? ''), schemaProps)) {
-        existingListId = blockId(b);
-        break;
+  await sleep(25);
+
+  let materializedSections = 0;
+  if (inferredType) {
+    const obj = objectByName(inferredType);
+    if (obj) {
+      materializedSections = await materializeTemplateSections(result, pageName, obj, blocks, pageBlockId);
+      if (materializedSections) {
+        blocks = await getBlocks(pageName);
+        if (!blocks?.length && safePageName(pageName) !== pageName) blocks = await getBlocks(safePageName(pageName));
       }
     }
-    if (existingListId && logseq.Editor.updateBlock) {
-      try {
-        await logseq.Editor.updateBlock(existingListId, propLines);
-        result.actions.push(`REFRESHED schema prop list for visibility on ${inferredType}`);
-      } catch {}
-    } else {
-      await logseq.Editor.appendBlockInPage(pageName, propLines).catch(() => {});
-      result.actions.push(`Added schema prop lines to content for visibility on ${inferredType}`);
-    }
   }
-
-  await sleep(200);
 
   let concretized = 0;
   let phantomTagsFixed = 0;
@@ -1138,35 +1170,21 @@ async function repairPageCore(
     result.notes.push(`Dashboard query repair: inferred object type for ${pageName}: ${objectType}.`);
   }
   const repaired = await repairDashboardQueries(result, pageName, blocks, objectType);
-  const linked = await repairLinkedParentDashboards(result, props, objectType, pageName);
+  const linked = await repairLinkedParentDashboards(
+    result,
+    props,
+    objectType,
+    pageName,
+    repairPageRefsFromValue,
+    resolveVisibleNodeToken,
+    inferCurrentPageObjectType,
+  );
 
   result.notes.push(
-    `Repair ${label}: ${pageName}; promoted ${resolvedTags.size} tag(s), ${props.size} property candidate(s), fixed ${phantomTagsFixed} phantom (#tag) block(s), concretized ${concretized} query block(s), repaired ${repaired} dashboard query block(s), repaired ${linked} linked parent dashboard query block(s).`,
+    `Repair ${label}: ${pageName}; promoted ${resolvedTags.size} tag(s), ${props.size} property candidate(s), inserted ${materializedSections} template section(s), fixed ${phantomTagsFixed} phantom (#tag) block(s), concretized ${concretized} query block(s), repaired ${repaired} dashboard query block(s), repaired ${linked} linked parent dashboard query block(s).`,
   );
 
   return { objectType, repaired, linked, resolvedTags, props };
-}
-
-function findSectionBlocks(blocks: any[]): Map<string, any> {
-  const map = new Map<string, any>();
-  for (const block of walkBlocks(blocks)) {
-    const section = sectionNameFromLine(block?.content);
-    if (section && !map.has(section)) map.set(section, block);
-  }
-  return map;
-}
-
-async function readBlockContent(block: any): Promise<string> {
-  const id = blockId(block);
-  if (id && logseq.Editor.getBlock) {
-    try {
-      const fresh = await logseq.Editor.getBlock(id);
-      if (fresh?.content != null) return String(fresh.content);
-    } catch {
-      /* ignore */
-    }
-  }
-  return String(block?.content ?? '');
 }
 
 async function repairApplyTagToPage(result: Result, pageBlockId: string, tag: string): Promise<boolean> {
@@ -1197,7 +1215,12 @@ async function repairApplyTagToPage(result: Result, pageBlockId: string, tag: st
           def = toJournalDay(defaultPropertyValue(key, obj) || '');
         }
         if (def) {
-          await repairUpsertPageProperty(result, pageBlockId, key, def);
+          const shortKey = canonicalPropertyKey(key);
+          const spec = propertySpec(shortKey);
+          await repairUpsertPageProperty(result, pageBlockId, key, def, {
+            preserveEmpty: (obj.requiredProperties ?? []).map(canonicalPropertyKey).includes(shortKey),
+            materializeEmptyNode: String(spec?.type ?? '').toLowerCase() === 'node',
+          });
         }
       }
     }
@@ -1237,40 +1260,70 @@ async function normalizeDatePropertyLineInContent(
   }
 }
 
+async function ensurePlaceholderPagesForNodeValue(result: Result, value: string): Promise<void> {
+  const re = /\[\[(LSS Placeholder\/[^\]]+)\]\]/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(String(value ?? '')))) {
+    if (!match[1]) continue;
+    await ensurePage(result, match[1], {
+      'lss-kind': 'Template Placeholder',
+      'lss-status': 'placeholder',
+    });
+  }
+}
+
 async function repairUpsertPageProperty(
   result: Result,
   pageBlockId: string,
   property: string,
   value: string,
+  options: { preserveEmpty?: boolean; materializeEmptyNode?: boolean } = {},
 ): Promise<boolean> {
   if (!property || SKIP_PROMOTE_KEYS.has(property) || property.startsWith('block/')) return false;
+  const shortKey = canonicalPropertyKey(property);
   if (!String(value ?? '').trim()) {
-    const currentValue = await readCurrentBlockProperty(pageBlockId, canonicalPropertyKey(property));
+    const currentValue = await readCurrentBlockProperty(pageBlockId, shortKey);
+    const spec = propertySpec(shortKey);
+    const isNodeRel = (await isDbGraph()) && String(spec?.type ?? '').toLowerCase() === 'node';
+    if ((options.preserveEmpty || options.materializeEmptyNode) && isNodeRel) {
+      const cardinality = String((spec as { cardinality?: string } | undefined)?.cardinality ?? '').toLowerCase();
+      if (cardinality === 'many') {
+        result.notes.push(`Empty many-valued node property ${shortKey} left unset; Logseq rejects empty array writes.`);
+        return false;
+      } else if (options.preserveEmpty) {
+        result.notes.push(`Required node property ${shortKey} needs a selected page value.`);
+      } else {
+        result.notes.push(`Schema node property ${shortKey} needs a selected page value before Logseq can display it.`);
+      }
+      return false;
+    }
     if (currentValue != null) {
       if (logseq.Editor.removeBlockProperty) {
-        await logseq.Editor.removeBlockProperty(pageBlockId, canonicalPropertyKey(property)).catch(() => null);
+        await logseq.Editor.removeBlockProperty(pageBlockId, shortKey).catch(() => null);
         result.actions.push(`REMOVED ${property} (cleared)`);
       }
     }
     return false;
   }
-  if (!logseq.Editor.upsertBlockProperty) {
-    result.notes.push(`upsertBlockProperty API unavailable; could not promote ${property}:: to current page.`);
-    return false;
-  }
-  const shortKey = canonicalPropertyKey(property);
   try {
-    const upsertValue = await resolveUpsertPropertyValue(shortKey, value);
     const isNodeRel =
       (await isDbGraph()) &&
-      RELATIONSHIP_PROPERTIES.has(shortKey) &&
       String(propertySpec(shortKey)?.type ?? '').toLowerCase() === 'node';
     const currentValue = await readCurrentBlockProperty(pageBlockId, shortKey);
-    if (isDateProperty(shortKey) && isValidDatePropertyValue(currentValue)) {
-      result.actions.push(`SKIP date property already valid: ${shortKey}`);
-      return false;
-    }
-    if (propertyValuesEquivalent(currentValue, upsertValue, shortKey)) {
+    const ownedCurrentValue = isDateProperty(shortKey) ? await readDatascriptUserPropertyValue(pageBlockId, shortKey) : currentValue;
+    if (isNodeRel) await ensurePlaceholderPagesForNodeValue(result, value);
+    const upsertValue = await resolveUpsertPropertyValue(shortKey, value);
+    if (isDateProperty(shortKey)) {
+      const nextJournalDay = toJournalDay(value);
+      if (isValidDatePropertyValue(ownedCurrentValue) && nextJournalDay != null) {
+        const curMs = parseDatePropertyValue(ownedCurrentValue);
+        const nextMs = parseDatePropertyValue(nextJournalDay);
+        if (curMs != null && nextMs != null && curMs === nextMs) {
+          result.actions.push(`SKIP date property already valid: ${shortKey}`);
+          return false;
+        }
+      }
+    } else if (propertyValuesEquivalent(ownedCurrentValue, upsertValue, shortKey)) {
       result.actions.push(`SKIP page property unchanged: ${shortKey}`);
       return false;
     }
@@ -1281,15 +1334,6 @@ async function repairUpsertPageProperty(
         await sleep(15);
       }
       return false;
-    }
-    // If we are about to write a date and current already parses as valid, skip even if raw values differ
-    if (isDateProperty(shortKey) && isValidDatePropertyValue(currentValue) && isValidDatePropertyValue(upsertValue)) {
-      const curMs = parseDatePropertyValue(currentValue);
-      const upMs = parseDatePropertyValue(upsertValue);
-      if (curMs != null && upMs != null && curMs === upMs) {
-        result.actions.push(`SKIP date property already valid: ${shortKey}`);
-        return false;
-      }
     }
     if (isNodeRel && typeof upsertValue === 'string') {
       const targets = (((propertySpec(shortKey) as { targets?: unknown[] } | undefined)?.targets ?? [])).map(String);
@@ -1308,12 +1352,8 @@ async function repairUpsertPageProperty(
       result.actions.push(`SKIP node property already linked: ${shortKey}`);
       return false;
     }
-    if (isNodeRel && isDbPageRefValue(upsertValue) && logseq.Editor.removeBlockProperty) {
-      await logseq.Editor.removeBlockProperty(pageBlockId, shortKey).catch(() => null);
-      await sleep(50);
-    }
     const opts = isNodeRel ? ({ reset: true } as const) : undefined;
-    await upsertBlockPropertyWithRetry(pageBlockId, shortKey, upsertValue, opts);
+    await upsertPagePropertyReliable(result, pageBlockId, shortKey, upsertValue, opts);
     const displayValue = isDateProperty(shortKey)
       ? formatDatePropertyValue(upsertValue) || String(value).slice(0, 80)
       : isDbPageRefValue(upsertValue)
@@ -1333,46 +1373,6 @@ async function repairUpsertPageProperty(
   }
 }
 
-async function removeDashboardQueryBlock(
-  result: Result,
-  block: any,
-  label: string,
-): Promise<boolean> {
-  const id = blockId(block);
-  if (!id || !logseq.Editor.removeBlock) return false;
-  try {
-    await logseq.Editor.removeBlock(id);
-    result.actions.push(`REMOVE duplicate dashboard query block (${label})`);
-    await sleep(50);
-    return true;
-  } catch (error) {
-    result.errors.push(`remove duplicate query block: ${formatError(error)}`);
-    return false;
-  }
-}
-
-async function maybeMarkQueryBlock(result: Result, blockIdValue: string | null, content: string): Promise<void> {
-  if (!blockIdValue || !isQueryLikeContent(content)) return;
-  if (!logseq.Editor.addBlockTag) {
-    result.notes.push(`addBlockTag API unavailable; query block relies on inline #Query only if pasted manually.`);
-    return;
-  }
-  if (await pageHasClassTag(blockIdValue, 'Query')) {
-    result.actions.push(`SKIP #Query tag already on query block`);
-    return;
-  }
-  const queryTag = await ensureTagByName(result, 'Query');
-  const queryTagId = queryTag ? entityIdentity(queryTag) : null;
-  if (!queryTagId) return;
-  try {
-    await logseq.Editor.addBlockTag(blockIdValue, queryTagId);
-    result.actions.push(`ADD #Query tag to query block: ${String(content).slice(0, 80)}`);
-    await sleep(15);
-  } catch (error) {
-    result.errors.push(`query-block-tag: ${formatError(error)}`);
-  }
-}
-
 async function repairResolveTagSet(result: Result, tags: Set<string>): Promise<Set<string>> {
   const out = new Set<string>();
   for (const tag of tags) out.add(await resolveVisibleNodeToken(result, tag));
@@ -1386,187 +1386,14 @@ export async function repairDashboardQueries(
   typeHint: string | null = null,
   sectionsFilter: Set<string> | null = null,
 ): Promise<number> {
-  const objectType = typeHint || inferCurrentPageObjectType(pageName, blocks);
-  if (!objectType) {
-    result.notes.push(`Dashboard query repair: could not infer object type from page sections or promoted tags/properties.`);
-    return 0;
-  }
-  const template = templateDefByObjectType(objectType);
-  if (!template) {
-    result.notes.push(`Dashboard query repair: no template definition found for inferred type ${objectType}.`);
-    return 0;
-  }
-  const views = viewDefinitionsSafe(template);
-  let freshBlocks = await getBlocks(pageName);
-  if (!freshBlocks?.length && safePageName(pageName) !== pageName) {
-    freshBlocks = await getBlocks(safePageName(pageName));
-  }
-  if (!freshBlocks?.length) freshBlocks = blocks;
-  const sectionBlocks = findSectionBlocks(freshBlocks);
-  let changed = 0;
-  let checked = 0;
-
-  const pageEntity = await getPage(pageName);
-
-  for (const view of views) {
-    const section = String(view.section ?? '').trim();
-    if (!section) continue;
-    if (sectionsFilter && !sectionsFilter.has(section)) continue;
-    let sectionBlock = sectionBlocks.get(section);
-    if (!sectionBlock) {
-      if (!logseq.Editor.appendBlockInPage) {
-        result.errors.push(`dashboard-section ${section}: logseq.Editor.appendBlockInPage API unavailable`);
-        continue;
-      }
-      try {
-        sectionBlock = await logseq.Editor.appendBlockInPage(pageName, section);
-        sectionBlocks.set(section, sectionBlock);
-        result.actions.push(`INSERT dashboard section: ${objectType} / ${section}`);
-        await sleep(THROTTLE_MS);
-      } catch (error) {
-        result.errors.push(`insert dashboard section ${section}: ${formatError(error)}`);
-        continue;
-      }
-    }
-    const queryContent = await dashboardQueryBlockForViewAsync(view, pageName, pageEntity);
-    if (!queryContent) continue;
-    const queryTitle = (view && view.sourceTags && view.sourceTags.length ? view.sourceTags[0] : section) || section;
-    const existingQueries = await findAllQueryBlocksInSectionAsync(sectionBlock);
-    if (existingQueries.length) {
-      const canonical =
-        (await pickCanonicalQueryBlock(existingQueries, queryContent)) ?? existingQueries[0];
-      const canonicalId = blockId(canonical);
-      const duplicateCount = existingQueries.length - 1;
-
-      for (const existing of existingQueries) {
-        if (blockId(existing) === canonicalId) continue;
-        if (await removeDashboardQueryBlock(result, existing, `${objectType} / ${section}`)) {
-          changed++;
-        }
-      }
-      if (duplicateCount > 0) {
-        result.notes.push(
-          `Dashboard query dedupe: removed ${duplicateCount} extra query block(s) under ${section}; kept one canonical block.`,
-        );
-      }
-
-      const before = await readDashboardQueryBlockContent(canonical);
-      const needsContent = queryBlockNeedsRepair(before, queryContent);
-      const struct = await inspectDbQueryBlockStructure(canonical);
-      const needsStructure = dbAdvancedQueryBlockNeedsStructureRepair(struct);
-      if (needsContent || needsStructure) {
-        const hasTagButNoChild = struct.hasQueryClassTag && !struct.hasQueryProperty;
-        const hasEdnButNoDisplay = struct.hasQueryClassTag && struct.hasQueryProperty && struct.childTitleHasEdn && !struct.childDisplayTypeIsCode;
-        if ((hasTagButNoChild || hasEdnButNoDisplay) && (await forceCreateQueryChild(result, canonical, queryContent))) {
-          result.actions.push(`FORCED/REPAIRED query child for ${objectType} / ${section}`);
-          await updateBlockContent(result, canonical, queryTitle, `Set query title to ${queryTitle}`);
-          changed++;
-        } else {
-          // Rebuild from scratch
-          for (const existing of existingQueries) {
-            if (await removeDashboardQueryBlock(result, existing, `${objectType} / ${section}`)) {
-              changed++;
-            }
-          }
-          if (!logseq.Editor.insertBlock) {
-            result.errors.push(`dashboard-query: insertBlock unavailable for ${section}`);
-          } else {
-            const fresh = await logseq.Editor.insertBlock(
-              blockId(sectionBlock),
-              queryTitle,
-              { sibling: false, before: false, end: true }
-            );
-            if (fresh) {
-              const freshId = blockId(fresh);
-              const queryTagId = await resolveQueryClassTagId();
-              if (queryTagId) {
-                await logseq.Editor.addBlockTag(freshId, queryTagId).catch(() => {});
-              }
-              await sleep(20);
-              const configured = await configureDbAdvancedQueryBlock(result, fresh, queryContent);
-              if (configured) {
-                result.actions.push(`REBUILT advanced query from scratch for ${objectType} / ${section}`);
-                await updateBlockContent(result, fresh, queryTitle, `Set query title to ${queryTitle}`);
-                changed++;
-              } else {
-                await sleep(120);
-                const configured2 = await configureDbAdvancedQueryBlock(result, fresh, queryContent);
-                if (configured2) {
-                  result.actions.push(`REBUILT + retry configured for ${objectType} / ${section}`);
-                  await updateBlockContent(result, fresh, queryTitle, `Set query title to ${queryTitle}`);
-                  changed++;
-                } else {
-                  // The only thing usually left is the :code keyword — hammer it
-                  await repairDbQueryBlockUiKeywords(result, fresh);
-                  const recheck = await inspectDbQueryBlockStructure(fresh);
-                  if (recheck.childDisplayTypeIsCode) {
-                    result.actions.push(`SET :code via post-rebuild keywords repair for ${objectType} / ${section}`);
-                    changed++;
-                  } else {
-                    result.notes.push(
-                      `Fresh shell created for ${objectType} / ${section} (auto-repair will finalize :code)`
-                    );
-                    try { scheduleAutoRepair(pageName); } catch {}
-                  }
-                }
-              }
-            }
-          }
-        }
-      } else {
-        checked++;
-      }
-    } else if (logseq.Editor.insertBlock) {
-      try {
-        const isDb = await isDbGraph();
-        const shellContent = isDb ? queryTitle : queryContent;
-        const inserted = await logseq.Editor.insertBlock(
-          blockId(sectionBlock),
-          shellContent,
-          {
-            sibling: false,
-            before: false,
-            end: true,
-          },
-        );
-        result.actions.push(`INSERT dashboard query shell: ${objectType} / ${section}`);
-        changed++;
-        if (isDb && inserted && queryContent) {
-          let ok = await configureDbAdvancedQueryBlock(result, inserted, queryContent);
-          if (!ok) {
-            await sleep(150);
-            ok = await configureDbAdvancedQueryBlock(result, inserted, queryContent);
-          }
-          if (ok) {
-            result.actions.push(`CONFIGURED advanced query after insert for ${objectType} / ${section}`);
-            await updateBlockContent(result, inserted, queryTitle, `Set query title to ${queryTitle}`);
-          } else {
-            await repairDbQueryBlockUiKeywords(result, inserted);
-            await sleep(100);
-            const recheck = await inspectDbQueryBlockStructure(inserted);
-            if (!dbAdvancedQueryBlockNeedsStructureRepair(recheck)) {
-              result.actions.push(`RECOVERED query structure via keywords + recheck for ${objectType} / ${section}`);
-              await updateBlockContent(result, inserted, queryTitle, `Set query title to ${queryTitle}`);
-            } else {
-              result.notes.push(`configure after first insert needed extra pass for ${objectType} / ${section} (auto-repair will help)`);
-              try { scheduleAutoRepair(pageName); } catch {}
-            }
-          }
-        } else if (inserted && !isDb) {
-          await updateBlockContent(result, inserted, queryTitle, `Set query title to ${queryTitle}`);
-        }
-      } catch (error) {
-        result.errors.push(`insert dashboard query ${section}: ${formatError(error)}`);
-      }
-    } else {
-      result.errors.push(`dashboard-query ${section}: logseq.Editor.insertBlock API unavailable`);
-    }
-  }
-
-  result.notes.push(
-    `Dashboard query repair: inferred ${objectType}; changed/inserted ${changed} query block(s), checked ${checked} existing query block(s).`,
+  return repairDashboardQueriesWithInference(
+    result,
+    pageName,
+    blocks,
+    typeHint,
+    sectionsFilter,
+    inferCurrentPageObjectType,
   );
-  return changed;
 }
 
 async function repairSpecificPage(
@@ -1603,58 +1430,17 @@ async function repairSpecificPage(
       markRepairCooldown(pageName);
       return materialized;
     }
-    const { repaired } = await repairPageCore(result, pageName, pageBlockId, blocks, typeHint, label);
+    const { objectType, repaired } = await repairPageCore(result, pageName, pageBlockId, blocks, typeHint, label);
+    if (label === 'current page' && !objectType) {
+      result.errors.push(
+        `Materialise page: ${pageName} has no primary LSS type. Add exactly one LSS type tag to the page, or tag one source/journal block that links to [[${safePageName(pageName)}]] with exactly one LSS type tag, then rerun lss: materialise page.`,
+      );
+    }
     markRepairCooldown(pageName);
     return repaired;
   } finally {
     exitRepairSession();
   }
-}
-
-async function repairLinkedParentDashboards(
-  result: Result,
-  props: Map<string, string>,
-  objectType: string | null,
-  currentPage: string,
-): Promise<number> {
-  let total = 0;
-  const repairedKeys = new Set<string>();
-
-  for (const [prop, rawValue] of props.entries()) {
-    const spec = propertySpec(prop);
-    if (String(spec?.type ?? '').toLowerCase() !== 'node') continue;
-    const refs = repairPageRefsFromValue(rawValue);
-    if (!refs.length) continue;
-
-    const targets = ((spec as { targets?: unknown[] } | undefined)?.targets ?? []).map(String).filter(Boolean);
-    for (const targetType of targets) {
-      const dashboard = dashboardPageForObjectType(targetType);
-      const template = templateDefByObjectType(targetType);
-      if (!dashboard || !template) continue;
-      const sections = new Set<string>();
-      for (const view of viewDefinitionsSafe(template)) {
-        if (view.dashboard !== dashboard) continue;
-        if ((view.filters ?? []).some((filter) => filterProps(filter).includes(prop))) {
-          sections.add(String(view.section ?? '').trim());
-        }
-      }
-      if (!sections.size) continue;
-
-      for (const ref of refs) {
-        const parentName = await resolveVisibleNodeToken(result, ref);
-        const key = `${targetType}:${parentName}:${[...sections].sort().join('|')}`;
-        if (repairedKeys.has(key)) continue;
-        repairedKeys.add(key);
-        result.notes.push(
-          `Linked parent repair: ${objectType ?? 'object'} ${currentPage} points to ${targetType} [[${parentName}]] via ${prop}; refreshing ${[...sections].join(', ')}.`,
-        );
-        const parentBlocks = await getBlocks(parentName);
-        total += await repairDashboardQueries(result, parentName, parentBlocks, targetType, sections);
-        markRepairCooldown(parentName);
-      }
-    }
-  }
-  return total;
 }
 
 export async function repairNamedPage(
@@ -1676,6 +1462,11 @@ export async function repairCurrentPage(result: Result): Promise<void> {
     result.errors.push(`Could not read current page object: ${current}`);
     return;
   }
-  const pageName = pageVisibleName(page, current) || current;
+  let pageName = pageVisibleName(page, current) || current;
+  if (!(await pageLooksMaterializable(pageName))) {
+    const fallback = await recentTaggedLssPageFallback(result, pageName);
+    if (fallback) pageName = fallback;
+  }
+  result.notes.push(`Materialise current-page resolver selected: ${pageName}.`);
   await repairSpecificPage(result, pageName, null, 'current page');
 }

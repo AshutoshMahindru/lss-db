@@ -15,12 +15,10 @@ import { scheduleAutoRepair } from './auto-repair';
 import { repairNamedPage } from './repair';
 import {
   canonicalPropertyKey,
-  isDateProperty,
   pageHasClassTag,
   resolveUpsertPropertyValue,
-  toJournalDay,
 } from '../core/db-properties';
-import { sleep } from '../core/runner';
+import { formatError, sleep } from '../core/runner';
 import {
   allObjects,
   dashboardPageForObjectType,
@@ -51,6 +49,10 @@ function defaultPropertyValueForCreate(
 ): string {
   const p = String(prop);
   if (Object.prototype.hasOwnProperty.call(overrides, p)) return overrides[p] ?? '';
+  if (Object.prototype.hasOwnProperty.call(o.defaultValues ?? {}, p)) {
+    const value = o.defaultValues?.[p];
+    return value == null ? '' : String(value);
+  }
   const area = normalizeAreaRef(o.area);
   if (p === 'area' || p === 'areas') return `[[${area}]]`;
   if (p === 'status') return safeTag(o.tag) === 'ActionItem' ? 'Todo' : 'active';
@@ -224,15 +226,10 @@ async function defaultCreateOverrides(o: RegistryObject): Promise<Record<string,
   return overrides;
 }
 
-function entityPageBody(o: RegistryObject, title: string, overrides: Record<string, string> = {}): string {
+function entityPageBody(o: RegistryObject, title: string): string {
   const tag = safeTag(o.tag);
   const lines: string[] = [];
   lines.push(`${title} #${tag}`);
-  lines.push('');
-  for (const p of uniqueProps(o)) {
-    const val = defaultPropertyValueForCreate(p, o, overrides);
-    lines.push(`${p}:: ${val}`);
-  }
   lines.push('');
   lines.push('Purpose:');
   lines.push('- ');
@@ -257,6 +254,52 @@ function formBlockBody(o: RegistryObject): string {
   return lines.join('\n');
 }
 
+async function createPropertyValue(
+  prop: string,
+  o: RegistryObject,
+  overrides: Record<string, string>,
+): Promise<unknown> {
+  const raw = defaultPropertyValueForCreate(prop, o, overrides);
+  return await resolveUpsertPropertyValue(prop, raw);
+}
+
+async function upsertCreationProperties(
+  r: Result,
+  targetBlockId: string,
+  o: RegistryObject,
+  overrides: Record<string, string>,
+  targetLabel: string,
+): Promise<void> {
+  if (!targetBlockId) {
+    r.errors.push(`creation property upsert ${targetLabel}: missing target block id`);
+    return;
+  }
+  if (!logseq.Editor.upsertBlockProperty) {
+    r.notes.push(`SKIP creation property upsert on ${targetLabel}: upsertBlockProperty API unavailable.`);
+    return;
+  }
+
+  const props = uniqueProps(o);
+  let written = 0;
+  for (const p of props) {
+    try {
+      const val = await createPropertyValue(p, o, overrides);
+      if (val == null) {
+        r.notes.push(`SKIP creation property ${targetLabel}.${p}: no DB-compatible value resolved.`);
+        continue;
+      }
+      await logseq.Editor.upsertBlockProperty(targetBlockId, p, val);
+      written++;
+    } catch (error) {
+      r.errors.push(`creation property ${targetLabel}.${p}: ${formatError(error)}`);
+    }
+  }
+
+  if (written) {
+    r.actions.push(`UPSERT creation properties: ${targetLabel} (${written}/${props.length})`);
+  }
+}
+
 async function createEntityByName(r: Result, objectName: string): Promise<void> {
   const o = objectByName(objectName);
   if (!o) {
@@ -266,50 +309,39 @@ async function createEntityByName(r: Result, objectName: string): Promise<void> 
   const title = `New ${o.name} - ${tsKey()}`;
   const overrides = await defaultCreateOverrides(o);
 
-  // Build props, resolving dates to proper journal-day for DB graphs to avoid errors.
+  // Build props, resolving dates to journal page ids for DB graphs to avoid date validation errors.
   const pageProps: Record<string, any> = {
     'lss-object-type': o.name,
     'lss-object-tag': `#${safeTag(o.tag)}`,
     'lss-post-created': 'true',
   };
   for (const p of uniqueProps(o)) {
-    const raw = defaultPropertyValueForCreate(p, o, overrides);
-    let val = await resolveUpsertPropertyValue(p, raw);
-    if (val == null && isDateProperty(p)) {
-      val = toJournalDay(raw);
+    try {
+      const value = await createPropertyValue(p, o, overrides);
+      if (value != null) pageProps[p] = value;
+    } catch (error) {
+      r.errors.push(`create page property ${title}.${p}: ${formatError(error)}`);
     }
-    pageProps[p] = val;
   }
   await ensurePage(r, title, pageProps);
 
-  await appendManagedBlock(r, title, `${MODE}-post-create-${o.name}-${tsKey()}`, entityPageBody(o, title, overrides));
+  await appendManagedBlock(r, title, `${MODE}-post-create-${o.name}-${tsKey()}`, entityPageBody(o, title));
 
   // Ensure properties using proper page block id (more reliable on DB graphs).
-  // Resolve dates etc. to journal-day ints on DB so no "should be a journal date" errors.
-  try {
-    const page = await getPage(title);
-    const pageBlockId = blockId(page) || title;
-    if (logseq.Editor.upsertBlockProperty) {
-      for (const p of uniqueProps(o)) {
-        const raw = defaultPropertyValueForCreate(p, o, overrides);
-        let val = await resolveUpsertPropertyValue(p, raw);
-        if (val == null && isDateProperty(p)) {
-          val = toJournalDay(raw);
-        }
-        if (val != null) {
-          await logseq.Editor.upsertBlockProperty(pageBlockId, p, val).catch(() => {});
-        }
-      }
-    }
-  } catch {}
+  // Resolve dates etc. to journal page ids on DB so no "should be a journal date" errors.
+  const page = await getPage(title);
+  const pageBlockId = blockId(page) || title;
+  await upsertCreationProperties(r, pageBlockId, o, overrides, title);
 
   scheduleAutoRepair(title);
 
   // Run repair pass on the new page so properties (and any structure) are ensured immediately via the robust path
-  // (no need for user to run lss:50 right after creation).
+  // (no need for user to run lss: materialise page right after creation).
   try {
     await repairNamedPage(r, title, o.name);
-  } catch {}
+  } catch (error) {
+    r.errors.push(`post-create repair ${title}: ${formatError(error)}`);
+  }
 
   r.notes.push(`Created placeholder page ${title}. Rename it to the real object name after review. (Schema ensured from #${o.tag})`);
   if (overrides.venture) {
@@ -331,23 +363,30 @@ async function insertFormByName(r: Result, objectName: string): Promise<void> {
     await sleep(100);
     const current = await logseq.Editor.getCurrentBlock?.();
     const insertedBlockId = current ? blockId(current) : null;
-    if (insertedBlockId && logseq.Editor.upsertBlockProperty) {
-      for (const p of uniqueProps(o)) {
-        const raw = defaultPropertyValueForCreate(p, o, overrides);
-        let val = await resolveUpsertPropertyValue(p, raw);
-        if (val == null && isDateProperty(p)) {
-          val = toJournalDay(raw);
-        }
-        if (val != null) {
-          await logseq.Editor.upsertBlockProperty(insertedBlockId, p, val).catch(() => {});
-        }
-      }
+    if (!insertedBlockId) {
+      r.errors.push(`form property upsert ${o.name}: could not resolve inserted block id`);
+    } else {
+      await upsertCreationProperties(r, insertedBlockId, o, overrides, `${o.name} form block`);
     }
-  } catch {}
+  } catch (error) {
+    r.errors.push(`form property upsert ${o.name}: ${formatError(error)}`);
+  }
   r.notes.push(`Inserted ${o.name} block at the cursor. Fill relationship fields with page refs, not plain text.`);
   for (const [prop, value] of Object.entries(overrides)) {
     r.notes.push(`Set ${prop} from current context: ${value}`);
   }
+}
+
+export function newRegistryPage(objectName: string): (r: Result) => Promise<void> {
+  return async (r: Result) => {
+    await createEntityByName(r, objectName);
+  };
+}
+
+export function insertRegistryFormBlock(objectName: string): (r: Result) => Promise<void> {
+  return async (r: Result) => {
+    await insertFormByName(r, objectName);
+  };
 }
 
 export async function newVenture(r: Result): Promise<void> {

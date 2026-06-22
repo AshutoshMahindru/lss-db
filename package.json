@@ -1,15 +1,16 @@
 {
   "name": "logseq-lss-db-final-plugin",
-  "version": "2.0.0",
-  "description": "Modular LSS DB Final Plugin v2.0.0 — step-by-step setup, creation, audit/repair, and maintenance commands.",
+  "version": "2.0.12",
+  "title": "LSS DB Final Plugin",
+  "description": "Modular LSS DB Final Plugin v2.0.12 — step-by-step setup, creation, audit/repair, and maintenance commands.",
   "main": "dist/index.html",
   "type": "module",
-  "private": true,
+  "effect": true,
   "license": "MIT",
   "scripts": {
     "build": "tsc --noEmit && vite build",
     "rebuild": "rm -rf dist && npm run build",
-    "package": "npm run build && node scripts/package-release.mjs",
+    "package": "npm run rebuild && node scripts/package-release.mjs",
     "validate": "node scripts/validate.mjs && node scripts/validate-repair-logic.mjs"
   },
   "dependencies": {
