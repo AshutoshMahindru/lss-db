@@ -10,6 +10,7 @@ const repairNativePropertiesSource = fs.readFileSync('src/modules/repair-native-
 const repairUserPropertiesSource = fs.readFileSync('src/modules/repair-user-properties.ts', 'utf8');
 const repairTemplateSource = fs.readFileSync('src/modules/repair-template.ts', 'utf8');
 const templatesSource = fs.readFileSync('src/modules/templates.ts', 'utf8');
+const contractsSource = fs.readFileSync('src/modules/contracts.ts', 'utf8');
 const repairDashboardSource = fs.readFileSync('src/modules/repair-dashboard.ts', 'utf8');
 const queriesSource = fs.readFileSync('src/modules/queries.ts', 'utf8');
 const advancedQueryBlocksSource = fs.readFileSync('src/modules/advanced-query-blocks.ts', 'utf8');
@@ -29,6 +30,10 @@ const registerSource = fs.readFileSync('src/commands/register.ts', 'utf8');
 const registryCreateSource = fs.readFileSync('src/commands/registry-create.ts', 'utf8');
 const dbPropertiesSource = fs.readFileSync('src/core/db-properties.ts', 'utf8');
 const registryIndexSource = fs.readFileSync('src/registry/index.ts', 'utf8');
+const setupStep10Source = setupSource.slice(
+  setupSource.indexOf('export async function step10db'),
+  setupSource.indexOf('function propertyValueToRestoreString'),
+);
 
 function fail(message) {
   throw new Error(message);
@@ -225,6 +230,60 @@ if (
 ) {
   fail('registry must generate named same-area relationship fields for page materialisation and native setup');
 }
+if (
+  !templatesSource.includes('const related: string[] = []') ||
+  !templatesSource.includes('const optional: string[] = []') ||
+  !templatesSource.includes("if (p === 'related-to')") ||
+  !templatesSource.includes("p.startsWith('related-')") ||
+  !templatesSource.includes('if (deferredRelatedTo) related.push(deferredRelatedTo)') ||
+  !templatesSource.includes('return [...required, ...related, ...optional]')
+) {
+  fail('generic related-to must be ordered after specific related fields and before trailing optional fields');
+}
+if (
+  !contractsSource.includes("import { uniqueObjectProps } from './templates'") ||
+  !contractsSource.includes('const props = uniqueObjectProps(o)') ||
+  !contractsSource.includes('for (const o of objs) for (const p of uniqueObjectProps(o)) props.add(p)')
+) {
+  fail('schema/tag property documentation must use the same canonical property order as materialised pages');
+}
+if (
+  !registryIndexSource.includes("if (name === 'related-to')") ||
+  !registryIndexSource.includes('for (const generatedSpec of generated)') ||
+  !registryIndexSource.includes("if (!byName.has('related-to'))")
+) {
+  fail('generated same-area properties must be created before generic related-to');
+}
+if (
+  !setupSource.includes('resetRelatedToNativeProperty') ||
+  !setupSource.includes("resetNativeNodeProperty(r, 'related-to')") ||
+  !setupSource.includes('ensureRelatedToPropertyOrder') ||
+  !setupSource.includes('await ensureRelatedToPropertyOrder(r);') ||
+  !setupSource.includes('ensureRelatedToBeforeTrailingAdminProperties') ||
+  !setupSource.includes("^\\d+(?:\\s*,\\s*\\d+)*$") ||
+  !setupSource.includes('nativePropertyOrder') ||
+  !setupSource.includes('clearCapturedPropertyValues') ||
+  !setupSource.includes('capturePropertyValuesForNativeProperty') ||
+  !setupSource.includes("name.startsWith('related-') || name === 'related-to'") ||
+  !setupSource.includes('repairRelatedToDisplayOrder') ||
+  !repairSource.includes('ensureRelatedToPropertyOrder(result)') ||
+  !repairSource.includes('ensureRelatedToBeforeTrailingAdminProperties(result)') ||
+  !registerSource.includes('lss: 55reset-related-to-property-order') ||
+  !navigationSource.includes('lss: 55reset-related-to-property-order') ||
+  !registerSource.includes('lss: 57repair-related-to-display-order') ||
+  !navigationSource.includes('lss: 57repair-related-to-display-order')
+) {
+  fail('existing graphs need a plugin-side related-to property order reset command');
+}
+if (
+  setupStep10Source.includes('resetRelatedToNativeProperty') ||
+  setupStep10Source.includes('resetNativePropertyDefinition') ||
+  repairSource.includes('resetRelatedToNativeProperty') ||
+  repairSource.includes('resetNativePropertyDefinition') ||
+  setupSource.includes("trailingBeforeRelatedTo.includes('owner')")
+) {
+  fail('setup/materialise must not reorder existing graph properties by resetting native property definitions');
+}
 for (const view of registry.viewDefinitions ?? []) {
   for (const tag of view.sourceTags ?? []) {
     if (!objectNames.has(tag) && !objectTags.has(tag)) fail(`view ${view.id} has unknown source tag ${tag}`);
@@ -248,6 +307,8 @@ if (!registryIndexSource.includes('canCreateNativeDbTag') || !registryIndexSourc
 if (
   !dbPropertiesSource.includes('shouldRefreshExistingPropertySchema') ||
   !dbPropertiesSource.includes("type === 'node'") ||
+  !setupSource.includes('nativePropertyResetReasonForSpec') ||
+  !setupSource.includes('await ensureNativeProperty(p, { refreshExistingSchema: false })') ||
   !setupSource.includes('staleNativeNodeProperties') ||
   setupSource.includes('await resetNativeNodeProperty(r, propertyName)') ||
   !setupSource.includes('setup left it unchanged') ||
@@ -255,6 +316,14 @@ if (
   !setupSource.includes('resetVentureNativeProperty')
 ) {
   fail('setup must detect stale native node property schemas but leave destructive resets to explicit commands');
+}
+if (
+  !setupSource.includes('resetStaleNativeNodeProperties') ||
+  !setupSource.includes('Resetting stale native node property schema(s)') ||
+  !registerSource.includes('lss: 56reset-stale-node-properties') ||
+  !navigationSource.includes('lss: 56reset-stale-node-properties')
+) {
+  fail('stale native node properties need an explicit reset command');
 }
 if (
   !dbPropertiesSource.includes('resolveJournalDatePropertyValue') ||

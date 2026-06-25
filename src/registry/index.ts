@@ -122,8 +122,13 @@ function generatedAreaPropertySpecs(): Array<Record<string, unknown>> {
 
 export function allPropertySpecs(): Array<Record<string, unknown>> {
   const byName = new Map<string, Record<string, unknown>>();
-  for (const spec of (registry.propertyRegistry ?? []) as Array<Record<string, unknown>>) byName.set(registryPropertyName(spec), spec);
-  for (const spec of generatedAreaPropertySpecs()) byName.set(registryPropertyName(spec), spec);
+  const generated = generatedAreaPropertySpecs();
+  for (const spec of (registry.propertyRegistry ?? []) as Array<Record<string, unknown>>) {
+    const name = registryPropertyName(spec);
+    if (name === 'related-to') for (const generatedSpec of generated) byName.set(registryPropertyName(generatedSpec), generatedSpec);
+    byName.set(name, spec);
+  }
+  if (!byName.has('related-to')) for (const spec of generated) byName.set(registryPropertyName(spec), spec);
   return [...byName.values()].filter((spec) => registryPropertyName(spec));
 }
 

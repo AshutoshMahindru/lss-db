@@ -4,7 +4,6 @@ import {
   allRelationships,
   allObjects,
   allTags,
-  areaRelationshipPropertiesForObject,
   normalizeAreaRef,
   objectsForArea,
   propertySpec,
@@ -12,6 +11,7 @@ import {
   relationshipsForTag,
 } from '../registry';
 import type { RegistryArea, RegistryObject, RegistryRelationship, RegistryTemplate } from '../registry/types';
+import { uniqueObjectProps } from './templates';
 
 export function starterWordEntries(): Array<{
   page: string;
@@ -95,7 +95,7 @@ export function areaContract(area: RegistryArea): string {
 }
 
 export function objectContract(o: RegistryObject, kind: string): string {
-  const props = [...(o.properties ?? []), ...areaRelationshipPropertiesForObject(o)];
+  const props = uniqueObjectProps(o);
   const rels = relationshipsForTag(safeTag(o.tag));
   return [
     contractHeader(kind, o.name, o.schemaPage),
@@ -155,7 +155,7 @@ export function tagContract(tag: string): string {
 export function tagPropertiesContract(tag: string): string {
   const objs = allObjects().filter((o) => safeTag(o.tag) === tag);
   const props = new Set<string>();
-  for (const o of objs) for (const p of o.properties ?? []) props.add(p);
+  for (const o of objs) for (const p of uniqueObjectProps(o)) props.add(p);
   const rels = relationshipsForTag(tag);
   return [
     contractHeader(

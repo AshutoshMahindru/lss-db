@@ -51,6 +51,9 @@ import { repairCurrentPage } from '../modules/repair';
 import {
   maintInitializeSchema,
   maintVerifySchema,
+  repairRelatedToDisplayOrder,
+  resetRelatedToNativeProperty,
+  resetStaleNativeNodeProperties,
   resetVentureNativeProperty,
   setupAll,
   step1,
@@ -176,6 +179,36 @@ export function registerCommands(): void {
       'LSS: Clean Native Tag Schema Properties',
     ],
     cleanNativeTagSchemaProperties,
+  );
+  registerAliases(
+    [
+      'lss: 55reset-related-to-property-order',
+      'lss:55reset-related-to-property-order',
+      'lss55',
+      'lss 55',
+      'LSS: Reset Related-To Property Order',
+    ],
+    resetRelatedToNativeProperty,
+  );
+  registerAliases(
+    [
+      'lss: 56reset-stale-node-properties',
+      'lss:56reset-stale-node-properties',
+      'lss56',
+      'lss 56',
+      'LSS: Reset Stale Node Properties',
+    ],
+    resetStaleNativeNodeProperties,
+  );
+  registerAliases(
+    [
+      'lss: 57repair-related-to-display-order',
+      'lss:57repair-related-to-display-order',
+      'lss57',
+      'lss 57',
+      'LSS: Repair Related-To Display Order',
+    ],
+    repairRelatedToDisplayOrder,
   );
 
   // Additional spec aliases that map to existing handlers

@@ -71,13 +71,27 @@ function propertyLineText(prop: TemplateProperty): string {
 
 export function uniqueObjectProps(o: RegistryObject): string[] {
   const seen = new Set<string>();
-  const out: string[] = [];
-  for (const p of [...(o.requiredProperties ?? []), ...(o.properties ?? []), ...areaRelationshipPropertiesForObject(o)]) {
-    if (!p || seen.has(p)) continue;
+  const required: string[] = [];
+  const related: string[] = [];
+  const optional: string[] = [];
+  let deferredRelatedTo = '';
+  const add = (p: string, bucket: string[]) => {
+    if (!p || seen.has(p)) return;
     seen.add(p);
-    out.push(p);
+    if (p === 'related-to') {
+      deferredRelatedTo = p;
+    } else if (p.startsWith('related-')) {
+      related.push(p);
+    } else {
+      bucket.push(p);
+    }
+  };
+  for (const p of o.requiredProperties ?? []) add(p, required);
+  for (const p of [...(o.properties ?? []), ...areaRelationshipPropertiesForObject(o)]) {
+    add(p, optional);
   }
-  return out;
+  if (deferredRelatedTo) related.push(deferredRelatedTo);
+  return [...required, ...related, ...optional];
 }
 
 export function placeholderNodePropertyValue(prop: string, spec: { targets?: unknown[] } | undefined): string {

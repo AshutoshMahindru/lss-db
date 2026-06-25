@@ -46,7 +46,7 @@ import { materializeTemplateSections } from './repair-template';
 import { cleanForeignPluginPropertyCopies, ensurePlaceholderPagesForNodeValue, isForeignPluginRegistryPropertyKey, isPlaceholderNodeDefault, readDatascriptUserPropertyValue } from './repair-user-properties';
 import { pageLooksMaterializable, recentTaggedLssPageFallback } from './repair-current-page';
 import { ensureMaterialiseNativeProperties } from './repair-native-properties';
-import { removeNativeTagSchemaProperties } from './setup';
+import { ensureRelatedToBeforeTrailingAdminProperties, ensureRelatedToPropertyOrder, removeNativeTagSchemaProperties } from './setup';
 import { upsertBlockPropertyViaHost } from './advanced-query-blocks';
 
 function repairPropertyLines(content: string): Array<{ property: string; value: string }> {
@@ -1013,6 +1013,8 @@ async function repairPageCore(
     const obj = objectByName(inferredType);
     if (obj) {
       await ensureMaterialiseNativeProperties(result, obj);
+      await ensureRelatedToPropertyOrder(result);
+      await ensureRelatedToBeforeTrailingAdminProperties(result);
       await applyInstanceHintTagsToProps(result, obj, props, instanceHints, pageName);
       for (const key of uniqueObjectProps(obj)) {
         if (String(props.get(key) ?? '').trim()) {

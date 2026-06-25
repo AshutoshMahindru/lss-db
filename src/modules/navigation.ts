@@ -69,6 +69,9 @@ export const COMMAND_HELP: CommandHelpLine[] = [
   { id: '52', label: 'lss: 52new-function', description: 'Create a placeholder Function page.' },
   { id: '53', label: 'lss: 53reset-venture-property', description: 'Reset stale native venture property schema to a DB node picker targeting #Venture. Aliases: lss53, lss:53reset-venture-property.' },
   { id: '54', label: 'lss: 54clean-native-tag-schema-properties', description: 'Remove LSS registry schema properties from native tag property lists and write a concise cleanup report.' },
+  { id: '55', label: 'lss: 55reset-related-to-property-order', description: 'Reset and restore related-to so existing graphs place it after specific related fields.' },
+  { id: '56', label: 'lss: 56reset-stale-node-properties', description: 'Reset and restore all stale LSS native node properties that Logseq cannot type-change in place.' },
+  { id: '57', label: 'lss: 57repair-related-to-display-order', description: 'Repair existing DB graphs so specific related fields render before related-to and admin fields render after it.' },
 ];
 
 export function registryCommandHelp(): CommandHelpLine[] {
@@ -461,6 +464,7 @@ export async function createHelpPage(r: Result): Promise<void> {
     '- Commands 33-44 update, audit, export, or snapshot existing pages.',
     '- Commands 46-49 create navigation, area-model, command-list, and layer-home pages.',
     '- `lss: materialise page` is the primary page materialization and repair command.',
+    '- `lss: 57repair-related-to-display-order` repairs existing DB property display order after older setup runs.',
     '- Commands intentionally use flat-safe scaffold page names to avoid namespace parent errors.',
     '- Spec aliases such as `LSS: Initialize Schema` map to the same handlers as numbered commands.',
   ].join('\n');

@@ -5,6 +5,8 @@ import {
   entityIdentity,
   getCanonicalProp,
   isPluginPropertyOwnershipError,
+  nativePropertyResetReasonForSpec,
+  pluginPropertyIdent,
   resolveUpsertPropertyValue,
 } from '../core/db-properties';
 import {
@@ -198,8 +200,16 @@ export async function step10db(r: Result): Promise<void> {
     const name = String(p.name ?? (p as { property?: unknown }).property ?? (p as { key?: unknown }).key ?? '').trim();
     if (!name) continue;
     const isNodeProperty = String((p as { type?: unknown }).type ?? '').toLowerCase() === 'node';
+    if (isNodeProperty) {
+      const resetReason = await nativePropertyResetReasonForSpec(p);
+      if (resetReason) {
+        r.notes.push(`SKIP native property ${name}: stale schema detected (${resetReason}); setup left it unchanged.`);
+        staleNativeNodeProperties.add(canonicalPropertyKey(name));
+        continue;
+      }
+    }
     try {
-      const ensured = await ensureNativeProperty(p);
+      const ensured = await ensureNativeProperty(p, { refreshExistingSchema: false });
       if (ensured?.created) {
         r.actions.push(`CREATE native property: ${name}${ensured.note ? ` (${ensured.note})` : ''}`);
       } else if (ensured?.skipped) {
@@ -234,6 +244,8 @@ export async function step10db(r: Result): Promise<void> {
       `Detected stale native ${propertyName} property schema; setup left it unchanged. Run an explicit reset/repair command only after confirming non-LSS values are backed up.`,
     );
   }
+  await ensureRelatedToPropertyOrder(r);
+  await ensureRelatedToBeforeTrailingAdminProperties(r);
   for (const o of allObjects()) {
     const tag = safeTag(o.tag);
     const tagObj = tagCache.get(tag);
@@ -259,6 +271,14 @@ function propertyValueToRestoreString(value: unknown): string {
   }
   if (typeof value === 'object') {
     const record = value as Record<string, unknown>;
+    const propertyValue =
+      record.value ??
+      record['logseq.property/value'] ??
+      record[':logseq.property/value'];
+    if (propertyValue != null) return propertyValueToRestoreString(propertyValue);
+    const createdFrom = record['logseq.property/created-from-property'] ?? record[':logseq.property/created-from-property'];
+    const title = record.title ?? record['block/title'] ?? record[':block/title'];
+    if (createdFrom != null && title != null) return String(title).trim();
     const id = record.id ?? record[':db/id'] ?? record['db/id'];
     if (id != null) return String(id);
     const name = pageVisibleName(record);
@@ -266,6 +286,136 @@ function propertyValueToRestoreString(value: unknown): string {
     return '';
   }
   return String(value ?? '').trim();
+}
+
+function entityIdFromValue(value: unknown): string | number | null {
+  if (typeof value === 'string' || typeof value === 'number') return value;
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  return (
+    (record.id as string | number | undefined) ??
+    (record[':db/id'] as string | number | undefined) ??
+    (record['db/id'] as string | number | undefined) ??
+    null
+  );
+}
+
+async function readPropertyValueEntityValue(value: unknown): Promise<unknown> {
+  const id = entityIdFromValue(value);
+  if (id == null || !logseq.DB?.datascriptQuery) return undefined;
+  try {
+    const rows = await logseq.DB.datascriptQuery(
+      `[:find ?value
+ :in $ ?e
+ :where [?e :logseq.property/value ?value]]`,
+      Number.isFinite(Number(id)) ? Number(id) : id,
+    );
+    const first = Array.isArray(rows) ? rows[0] : null;
+    return Array.isArray(first) ? first[0] : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function readPropertyValueEntityTitle(value: unknown): Promise<unknown> {
+  const id = entityIdFromValue(value);
+  if (id == null || !logseq.DB?.datascriptQuery) return undefined;
+  try {
+    const rows = await logseq.DB.datascriptQuery(
+      `[:find ?title
+ :in $ ?e
+ :where
+ [?e :logseq.property/created-from-property ?property]
+ [?e :block/title ?title]]`,
+      Number.isFinite(Number(id)) ? Number(id) : id,
+    );
+    const first = Array.isArray(rows) ? rows[0] : null;
+    return Array.isArray(first) ? first[0] : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function propertyValueToRestoreStringAsync(value: unknown): Promise<string> {
+  if (value == null) return '';
+  if (Array.isArray(value)) {
+    const parts = await Promise.all(value.map((item) => propertyValueToRestoreStringAsync(item)));
+    return parts.filter(Boolean).join(', ');
+  }
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const propertyValue =
+      record.value ??
+      record['logseq.property/value'] ??
+      record[':logseq.property/value'];
+    if (propertyValue != null) return propertyValueToRestoreStringAsync(propertyValue);
+  }
+  const propertyEntityValue = await readPropertyValueEntityValue(value);
+  if (propertyEntityValue != null) return propertyValueToRestoreStringAsync(propertyEntityValue);
+  const propertyEntityTitle = await readPropertyValueEntityTitle(value);
+  if (propertyEntityTitle != null) return propertyValueToRestoreStringAsync(propertyEntityTitle);
+  return propertyValueToRestoreString(value);
+}
+
+function specPropertyName(spec: Record<string, unknown>): string {
+  return String(spec.name ?? spec.property ?? spec.key ?? '').trim();
+}
+
+function orderFromRecord(source: Record<string, unknown> | null | undefined): string {
+  if (!source) return '';
+  return String(
+    source.order ??
+      source['block/order'] ??
+      source[':block/order'] ??
+      source.blockOrder ??
+      '',
+  ).trim();
+}
+
+async function nativePropertyOrder(name: string): Promise<string> {
+  if (logseq.Editor.getProperty) {
+    const prop = (await logseq.Editor.getProperty(name).catch(() => null)) as Record<string, unknown> | null;
+    const direct = orderFromRecord(prop);
+    if (direct) return direct;
+    const identity = prop?.uuid ?? prop?.id ?? prop?.[':block/uuid'] ?? prop?.['block/uuid'] ?? prop?.[':db/id'] ?? prop?.['db/id'];
+    if (identity != null && logseq.Editor.getBlock) {
+      const block = (await logseq.Editor.getBlock(identity as any).catch(() => null)) as Record<string, unknown> | null;
+      const blockOrder = orderFromRecord(block);
+      if (blockOrder) return blockOrder;
+    }
+    if (identity != null && logseq.Editor.getBlockProperties) {
+      const blockProps = (await logseq.Editor.getBlockProperties(identity as any).catch(() => null)) as
+        | Record<string, unknown>
+        | null;
+      const propOrder = orderFromRecord(blockProps);
+      if (propOrder) return propOrder;
+    }
+  }
+  if (!logseq.DB?.datascriptQuery) return '';
+  try {
+    const rows = await logseq.DB.datascriptQuery(
+      `[:find ?order
+ :in $ ?title ?name
+ :where
+ (or [?p :block/title ?title]
+     [?p :block/name ?name])
+ [?p :block/order ?order]]`,
+      name,
+      name.toLowerCase(),
+    );
+    if (!Array.isArray(rows)) return '';
+    const first = rows[0];
+    if (Array.isArray(first)) return String(first[0] ?? '').trim();
+    if (first && typeof first === 'object') {
+      const recordOrder = orderFromRecord(first as Record<string, unknown>);
+      if (recordOrder) return recordOrder;
+      const value = Object.values(first as Record<string, unknown>)[0];
+      return String(value ?? '').trim();
+    }
+    return String(first ?? '').trim();
+  } catch {
+    return '';
+  }
 }
 
 async function readAnyBlockProperty(blockIdentity: string, property: string): Promise<unknown> {
@@ -295,7 +445,12 @@ async function capturePropertyValuesForLssObjects(property: string): Promise<Arr
   if (!logseq.Editor.getTagObjects) return captured;
 
   for (const object of allObjects()) {
-    if (!uniqueObjectProps(object).some((prop) => canonicalPropertyKey(prop) === property)) continue;
+    if (
+      property !== 'lss-object-type' &&
+      !uniqueObjectProps(object).some((prop) => canonicalPropertyKey(prop) === property)
+    ) {
+      continue;
+    }
     const tag = safeTag(object.tag);
     const objects = await logseq.Editor.getTagObjects(tag).catch(() => null);
     for (const item of objects ?? []) {
@@ -309,6 +464,86 @@ async function capturePropertyValuesForLssObjects(property: string): Promise<Arr
   return captured;
 }
 
+function safePluginPropertyIdentForQuery(property: string): string {
+  const ident = pluginPropertyIdent(canonicalPropertyKey(property));
+  return /^:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(ident) ? ident : '';
+}
+
+async function capturePropertyValuesViaDatascript(property: string): Promise<Array<{ blockId: string; value: unknown }>> {
+  if (!logseq.DB?.datascriptQuery) return [];
+  const ident = safePluginPropertyIdentForQuery(property);
+  if (!ident) return [];
+  try {
+    const rows = await logseq.DB.datascriptQuery(
+      `[:find ?entity ?value
+ :where [?entity ${ident} ?value]]`,
+    );
+    const grouped = new Map<string, unknown[]>();
+    for (const row of (rows ?? []) as Array<[unknown, unknown]>) {
+      const id = entityIdentity(row?.[0]) ?? row?.[0];
+      if (id == null) continue;
+      const block = String(id).trim();
+      if (!block) continue;
+      const values = grouped.get(block) ?? [];
+      values.push(row[1]);
+      grouped.set(block, values);
+    }
+    return [...grouped.entries()].map(([blockId, values]) => ({
+      blockId,
+      value: values.length === 1 ? values[0] : values,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function capturePropertyValuesForNativeProperty(property: string): Promise<Array<{ blockId: string; value: unknown }>> {
+  const viaDatascript = await capturePropertyValuesViaDatascript(property);
+  if (viaDatascript.length) return viaDatascript;
+  return capturePropertyValuesForLssObjects(property);
+}
+
+async function clearCapturedPropertyValues(
+  r: Result,
+  property: string,
+  captured: Array<{ blockId: string; value: unknown }>,
+): Promise<boolean> {
+  if (!captured.length) return true;
+  if (!logseq.Editor.removeBlockProperty) {
+    r.errors.push(`removeBlockProperty API unavailable; cannot clear existing ${property} values before reset.`);
+    return false;
+  }
+  const keys = [
+    property,
+    pluginPropertyIdent(property),
+    pluginPropertyIdent(property).replace(/^:/, ''),
+  ];
+  let cleared = 0;
+  let failed = 0;
+  for (const item of captured) {
+    let removed = false;
+    let lastError = '';
+    for (const key of [...new Set(keys)]) {
+      try {
+        await logseq.Editor.removeBlockProperty(item.blockId, key);
+        removed = true;
+        break;
+      } catch (error) {
+        lastError = formatError(error);
+      }
+    }
+    if (removed) {
+      cleared++;
+    } else {
+      failed++;
+      r.errors.push(`CLEAR ${property} on ${item.blockId} failed: ${lastError || 'unknown error'}`);
+    }
+  }
+  r.actions.push(`CLEAR ${property} values before reset: ${cleared}/${captured.length}`);
+  await sleep(150);
+  return failed === 0;
+}
+
 async function waitForNativePropertyRemoval(name: string): Promise<boolean> {
   if (!logseq.Editor.getProperty) return true;
   for (let i = 0; i < 10; i++) {
@@ -317,6 +552,106 @@ async function waitForNativePropertyRemoval(name: string): Promise<boolean> {
     await sleep(150);
   }
   return false;
+}
+
+async function resetNativePropertyDefinition(r: Result, spec: Record<string, unknown>): Promise<void> {
+  const cleanName = canonicalPropertyKey(specPropertyName(spec));
+  if (MODE !== 'db') {
+    r.notes.push(`reset-${cleanName}-property applies only to DB graphs.`);
+    return;
+  }
+  if (!cleanName) {
+    r.errors.push('Native property reset aborted: missing property name.');
+    return;
+  }
+  if (!logseq.Editor.removeProperty) {
+    r.errors.push(`removeProperty API unavailable; cannot reset native ${cleanName} property.`);
+    return;
+  }
+
+  r.notes.push(`Before reset: ${await nativePropertySnapshot(cleanName)}`);
+  r.notes.push(
+    `Native API availability: removeProperty=${logseq.Editor.removeProperty ? 'yes' : 'no'}, upsertProperty=${logseq.Editor.upsertProperty ? 'yes' : 'no'}, setPropertyNodeTags=${logseq.Editor.setPropertyNodeTags ? 'yes' : 'no'}`,
+  );
+
+  const isNode = String(spec.type ?? '').toLowerCase() === 'node';
+  if (isNode) {
+    for (const target of (((spec as { targets?: unknown[] }).targets ?? [])).map(String).filter(Boolean)) {
+      const tag =
+        (await logseq.Editor.getTag?.(target).catch(() => null)) ||
+        (await logseq.Editor.createTag?.(target).catch(() => null));
+      if (!tag) {
+        r.errors.push(`Could not resolve/create native #${target} tag; ${cleanName} reset aborted.`);
+        return;
+      }
+      r.actions.push(`ENSURE native tag: #${target}`);
+    }
+  }
+
+  const captured = await capturePropertyValuesForNativeProperty(cleanName);
+  r.notes.push(`Captured ${captured.length} existing ${cleanName} value(s) before native property reset.`);
+  if (!(await clearCapturedPropertyValues(r, cleanName, captured))) {
+    r.notes.push(`Reset ${cleanName} aborted before removing the native property definition because value clearing failed.`);
+    return;
+  }
+
+  const existing = logseq.Editor.getProperty ? await logseq.Editor.getProperty(cleanName).catch(() => null) : null;
+  if (existing) {
+    const removedCallOk = await removeNativePropertyDefinition(cleanName, existing as Record<string, unknown>, r);
+    if (!removedCallOk) {
+      r.notes.push(`After failed remove: ${await nativePropertySnapshot(cleanName)}`);
+      return;
+    }
+    r.actions.push(`REMOVE native property definition: ${cleanName}`);
+    const removed = await waitForNativePropertyRemoval(cleanName);
+    r.notes.push(`After remove wait: ${await nativePropertySnapshot(cleanName)}`);
+    if (!removed) {
+      r.errors.push(`Native property ${cleanName} still exists after removeProperty; reload Logseq and rerun setup/reset.`);
+      return;
+    }
+  } else {
+    r.notes.push(`Native property ${cleanName} did not exist before reset.`);
+  }
+
+  const ensured = await ensureNativeProperty(spec);
+  r.notes.push(`After recreate: ${await nativePropertySnapshot(cleanName)}`);
+  if (ensured?.created) {
+    r.actions.push(`RECREATE native property: ${cleanName}${ensured.note ? ` (${ensured.note})` : ''}`);
+  } else if (ensured?.skipped) {
+    r.notes.push(`RECREATE native property ${cleanName}: ${ensured.note}`);
+  } else {
+    r.errors.push(`Failed to recreate native property: ${cleanName}`);
+    return;
+  }
+
+  let restored = 0;
+  let restoreFailed = 0;
+  if (logseq.Editor.upsertBlockProperty) {
+    for (const item of captured) {
+      const raw = await propertyValueToRestoreStringAsync(item.value);
+      if (!raw) continue;
+      let upsertValue = await resolveUpsertPropertyValue(cleanName, raw);
+      if (isNode && typeof upsertValue === 'string' && /^\d+(?:\s*,\s*\d+)*$/.test(raw)) {
+        const ids = raw.split(',').map((value) => Number(value.trim())).filter((value) => Number.isFinite(value));
+        const cardinality = String((spec as { cardinality?: string }).cardinality ?? '').toLowerCase();
+        if (ids.length) upsertValue = cardinality === 'many' ? ids : ids[0];
+      }
+      if (upsertValue == null || (isNode && typeof upsertValue === 'string')) {
+        r.notes.push(`SKIP restore ${cleanName} on ${item.blockId}: could not resolve ${raw} to a target page id`);
+        continue;
+      }
+      try {
+        await logseq.Editor.upsertBlockProperty(item.blockId, cleanName, upsertValue, { reset: true });
+        restored++;
+      } catch (error) {
+        restoreFailed++;
+        r.errors.push(`RESTORE ${cleanName} on ${item.blockId} failed: ${formatError(error)}`);
+      }
+    }
+  }
+  r.actions.push(`RESTORE ${cleanName} values after reset: ${restored}/${captured.length}`);
+  if (restoreFailed) r.notes.push(`Restore failures for ${cleanName}: ${restoreFailed}.`);
+  if (isNode) r.notes.push(`After reload, ${cleanName} should open as a DB node picker filtered to its target tag(s).`);
 }
 
 async function nativePropertySnapshot(name: string): Promise<string> {
@@ -391,89 +726,130 @@ async function removeNativePropertyDefinition(name: string, prop: Record<string,
 
 export async function resetNativeNodeProperty(r: Result, propertyName: string): Promise<void> {
   const cleanName = canonicalPropertyKey(propertyName);
-  if (MODE !== 'db') {
-    r.notes.push(`reset-${cleanName}-property applies only to DB graphs.`);
-    return;
-  }
-  if (!logseq.Editor.removeProperty) {
-    r.errors.push(`removeProperty API unavailable; cannot reset native ${cleanName} property.`);
-    return;
-  }
-
-  r.notes.push(`Before reset: ${await nativePropertySnapshot(cleanName)}`);
-  r.notes.push(
-    `Native API availability: removeProperty=${logseq.Editor.removeProperty ? 'yes' : 'no'}, upsertProperty=${logseq.Editor.upsertProperty ? 'yes' : 'no'}, setPropertyNodeTags=${logseq.Editor.setPropertyNodeTags ? 'yes' : 'no'}`,
-  );
-
   const spec = propertySpec(cleanName);
   if (!spec || String(spec.type ?? '').toLowerCase() !== 'node') {
     r.errors.push(`Registry node property spec missing: ${cleanName}`);
     return;
   }
-
-  for (const target of (((spec as { targets?: unknown[] }).targets ?? [])).map(String).filter(Boolean)) {
-    const tag =
-      (await logseq.Editor.getTag?.(target).catch(() => null)) ||
-      (await logseq.Editor.createTag?.(target).catch(() => null));
-    if (!tag) {
-      r.errors.push(`Could not resolve/create native #${target} tag; ${cleanName} reset aborted.`);
-      return;
-    }
-    r.actions.push(`ENSURE native tag: #${target}`);
-  }
-
-  const captured = await capturePropertyValuesForLssObjects(cleanName);
-  r.notes.push(`Captured ${captured.length} existing LSS ${cleanName} value(s) before native property reset.`);
-
-  const existing = logseq.Editor.getProperty ? await logseq.Editor.getProperty(cleanName).catch(() => null) : null;
-  if (existing) {
-    const removedCallOk = await removeNativePropertyDefinition(cleanName, existing as Record<string, unknown>, r);
-    if (!removedCallOk) {
-      r.notes.push(`After failed remove: ${await nativePropertySnapshot(cleanName)}`);
-      return;
-    }
-    r.actions.push(`REMOVE native property definition: ${cleanName}`);
-    const removed = await waitForNativePropertyRemoval(cleanName);
-    r.notes.push(`After remove wait: ${await nativePropertySnapshot(cleanName)}`);
-    if (!removed) {
-      r.errors.push(`Native property ${cleanName} still exists after removeProperty; reload Logseq and rerun setup/reset.`);
-      return;
-    }
-  } else {
-    r.notes.push(`Native property ${cleanName} did not exist before reset.`);
-  }
-
-  const ensured = await ensureNativeProperty(spec);
-  r.notes.push(`After recreate: ${await nativePropertySnapshot(cleanName)}`);
-  if (ensured?.created) {
-    r.actions.push(`RECREATE native property: ${cleanName}${ensured.note ? ` (${ensured.note})` : ''}`);
-  } else if (ensured?.skipped) {
-    r.notes.push(`RECREATE native property ${cleanName}: ${ensured.note}`);
-  } else {
-    r.errors.push(`Failed to recreate native property: ${cleanName}`);
-    return;
-  }
-
-  let restored = 0;
-  if (logseq.Editor.upsertBlockProperty) {
-    for (const item of captured) {
-      const raw = propertyValueToRestoreString(item.value);
-      if (!raw) continue;
-      const upsertValue = await resolveUpsertPropertyValue(cleanName, raw);
-      if (upsertValue == null || typeof upsertValue === 'string') {
-        r.notes.push(`SKIP restore ${cleanName} on ${item.blockId}: could not resolve ${raw} to a target page id`);
-        continue;
-      }
-      await logseq.Editor.upsertBlockProperty(item.blockId, cleanName, upsertValue, { reset: true });
-      restored++;
-    }
-  }
-  r.actions.push(`RESTORE ${cleanName} values after reset: ${restored}/${captured.length}`);
-  r.notes.push(`After reload, ${cleanName} should open as a DB node picker filtered to its target tag(s).`);
+  await resetNativePropertyDefinition(r, spec);
 }
 
 export async function resetVentureNativeProperty(r: Result): Promise<void> {
   await resetNativeNodeProperty(r, 'venture');
+}
+
+export async function resetRelatedToNativeProperty(r: Result): Promise<void> {
+  await resetNativeNodeProperty(r, 'related-to');
+}
+
+const RELATED_TO_TRAILING_DISPLAY_PROPERTIES: Array<Record<string, unknown>> = [
+  { name: 'owner', type: 'node', cardinality: 'one', targets: ['Person'] },
+  { name: 'lss-object-type', type: 'default', cardinality: 'one' },
+];
+
+async function relatedPropertiesAfterRelatedTo(): Promise<string[]> {
+  const relatedToOrder = await nativePropertyOrder('related-to');
+  if (!relatedToOrder) return [];
+  const laterSpecific: string[] = [];
+  for (const spec of allPropertySpecs()) {
+    const name = specPropertyName(spec);
+    if (!name.startsWith('related-') || name === 'related-to') continue;
+    const order = await nativePropertyOrder(name);
+    if (order && order > relatedToOrder) laterSpecific.push(name);
+  }
+  return laterSpecific;
+}
+
+export async function repairRelatedToDisplayOrder(r: Result): Promise<void> {
+  if (MODE !== 'db') {
+    r.notes.push('repair-related-to-display-order applies only to DB graphs.');
+    return;
+  }
+  const initialRelatedToOrder = await nativePropertyOrder('related-to');
+  if (!initialRelatedToOrder) {
+    const spec = propertySpec('related-to');
+    if (!spec) {
+      r.errors.push('Registry node property spec missing: related-to');
+      return;
+    }
+    await resetNativePropertyDefinition(r, spec);
+  }
+
+  const laterSpecific = await relatedPropertiesAfterRelatedTo();
+  if (laterSpecific.length) {
+    r.notes.push(`Repairing related-to order after specific related field(s): ${laterSpecific.join(', ')}.`);
+    await resetRelatedToNativeProperty(r);
+    await sleep(150);
+  }
+
+  for (const spec of RELATED_TO_TRAILING_DISPLAY_PROPERTIES) {
+    const name = specPropertyName(spec);
+    const relatedToOrder = await nativePropertyOrder('related-to');
+    const order = await nativePropertyOrder(name);
+    if (!relatedToOrder || !order || order > relatedToOrder) continue;
+    r.notes.push(`Repairing ${name} display order so it renders after related-to.`);
+    await resetNativePropertyDefinition(r, spec);
+    await sleep(150);
+  }
+
+  await ensureRelatedToPropertyOrder(r);
+  await ensureRelatedToBeforeTrailingAdminProperties(r);
+}
+
+export async function resetStaleNativeNodeProperties(r: Result): Promise<void> {
+  if (MODE !== 'db') {
+    r.notes.push('reset-stale-node-properties applies only to DB graphs.');
+    return;
+  }
+  const staleProperties: string[] = [];
+  for (const spec of allPropertySpecs()) {
+    const name = specPropertyName(spec);
+    if (!name || String(spec.type ?? '').toLowerCase() !== 'node') continue;
+    const resetReason = await nativePropertyResetReasonForSpec(spec);
+    if (resetReason) staleProperties.push(name);
+  }
+  if (!staleProperties.length) {
+    r.notes.push('No stale native node property schemas found.');
+    return;
+  }
+  r.notes.push(`Resetting stale native node property schema(s): ${staleProperties.join(', ')}.`);
+  for (const name of staleProperties) {
+    await resetNativeNodeProperty(r, name);
+    await sleep(75);
+  }
+}
+
+export async function ensureRelatedToPropertyOrder(r: Result): Promise<void> {
+  const relatedToOrder = await nativePropertyOrder('related-to');
+  if (!relatedToOrder) {
+    r.notes.push('related-to property order check skipped: property order unavailable from Logseq APIs.');
+    return;
+  }
+  const laterSpecific = [];
+  for (const spec of allPropertySpecs()) {
+    const name = specPropertyName(spec);
+    if (!name.startsWith('related-') || name === 'related-to') continue;
+    const order = await nativePropertyOrder(name);
+    if (order && order > relatedToOrder) laterSpecific.push(name);
+  }
+  if (!laterSpecific.length) return;
+  r.notes.push(
+    `related-to property order is before specific related field(s): ${laterSpecific.join(', ')}; setup left native property definitions unchanged.`,
+  );
+}
+
+export async function ensureRelatedToBeforeTrailingAdminProperties(r: Result): Promise<void> {
+  const relatedToOrder = await nativePropertyOrder('related-to');
+  if (!relatedToOrder) return;
+  const trailingBeforeRelatedTo = [];
+  for (const name of ['owner', 'lss-object-type']) {
+    const order = await nativePropertyOrder(name);
+    if (order && order < relatedToOrder) trailingBeforeRelatedTo.push(name);
+  }
+  if (!trailingBeforeRelatedTo.length) return;
+  r.notes.push(
+    `related-to property order is after trailing admin field(s): ${trailingBeforeRelatedTo.join(', ')}; setup left native property definitions unchanged.`,
+  );
 }
 
 export async function removeNativeTagSchemaProperties(
