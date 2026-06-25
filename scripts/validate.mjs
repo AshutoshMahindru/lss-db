@@ -264,6 +264,10 @@ if (
   !setupSource.includes('nativePropertyOrder') ||
   !setupSource.includes('clearCapturedPropertyValues') ||
   !setupSource.includes('capturePropertyValuesForNativeProperty') ||
+  !setupSource.includes('repairNativeNodePropertySchemaInPlace') ||
+  !setupSource.includes('repairStaleNativeNodePropertySchemas') ||
+  !setupSource.includes('(not [?entity :db/ident ?entityIdent])') ||
+  !setupSource.includes('schema repair changed property order') ||
   !setupSource.includes("name.startsWith('related-') || name === 'related-to'") ||
   !setupSource.includes('repairRelatedToDisplayOrder') ||
   !repairSource.includes('ensureRelatedToPropertyOrder(result)') ||
@@ -320,6 +324,7 @@ if (
 if (
   !setupSource.includes('resetStaleNativeNodeProperties') ||
   !setupSource.includes('Resetting stale native node property schema(s)') ||
+  !setupSource.includes('Repairing stale native node property schema(s) in place') ||
   !registerSource.includes('lss: 56reset-stale-node-properties') ||
   !navigationSource.includes('lss: 56reset-stale-node-properties')
 ) {
