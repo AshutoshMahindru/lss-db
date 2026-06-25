@@ -1,8 +1,10 @@
 import { MODE } from '../config';
 import { safeMarkdownRefs, safePageName, safeTag } from '../core/names';
 import {
+  allRelationships,
   allObjects,
   allTags,
+  areaRelationshipPropertiesForObject,
   normalizeAreaRef,
   objectsForArea,
   propertySpec,
@@ -93,7 +95,8 @@ export function areaContract(area: RegistryArea): string {
 }
 
 export function objectContract(o: RegistryObject, kind: string): string {
-  const rels = (registry.relationshipRegistry ?? []).filter((r) => (o.properties ?? []).includes(r.property));
+  const props = [...(o.properties ?? []), ...areaRelationshipPropertiesForObject(o)];
+  const rels = relationshipsForTag(safeTag(o.tag));
   return [
     contractHeader(kind, o.name, o.schemaPage),
     `db-tag:: #${o.tag}`,
@@ -105,7 +108,7 @@ export function objectContract(o: RegistryObject, kind: string): string {
     `required-properties:: ${(o.requiredProperties ?? []).join(', ') || '-'}`,
     '',
     'Canonical page properties (materialized on entity/form/word pages; templates provide layout only):',
-    ...(o.properties ?? []).map((p) => `- ${p}`),
+    ...props.map((p) => `- ${p}`),
     '',
     'Relationships:',
     ...(rels.length
@@ -320,7 +323,7 @@ export function pageTreeText(): string {
   node('Forms', 2);
   for (const o of registry.formTypes ?? []) node(o.schemaPage, 3);
   node('Relationships', 2);
-  for (const r of registry.relationshipRegistry ?? []) node(`Relationship/${r.property}`, 3);
+  for (const r of allRelationships()) node(`Relationship/${r.property}`, 3);
   node('Templates', 1);
   for (const t of registry.templates ?? []) node(t.name, 2);
   node('Word Extenders', 1);

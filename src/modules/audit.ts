@@ -12,7 +12,7 @@ import {
 import { canonicalPropertyKey } from '../core/db-properties';
 import { escapeRegExp, looksLikeUuid, safePageName, safeTag, tsKey, visiblePageLabel } from '../core/names';
 import type { AuditFinding, Result } from '../core/types';
-import { allObjects, allTags, registry } from '../registry';
+import { allObjects, allRelationships, allTags, registry } from '../registry';
 import { readNativeTagSchemaFindings } from './diagnose-native-tags';
 import { findAllQueryBlocksInSectionAsync, relationshipPropertyNames, sectionNameFromLine, tagsRequiringConfidentiality } from './queries';
 import { stepVerify } from './setup';
@@ -371,7 +371,7 @@ export async function auditCurrentPage(r: Result): Promise<void> {
 export async function auditGraph(r: Result): Promise<void> {
   await stepVerify(r);
   r.notes.push(
-    `Registry counts: areas=${(registry.areas ?? []).length}, entities=${(registry.entityTypes ?? []).length}, forms=${(registry.formTypes ?? []).length}, tags=${allTags().length}, relationships=${(registry.relationshipRegistry ?? []).length}.`,
+    `Registry counts: areas=${(registry.areas ?? []).length}, entities=${(registry.entityTypes ?? []).length}, forms=${(registry.formTypes ?? []).length}, tags=${allTags().length}, relationships=${allRelationships().length}.`,
   );
   if (MODE === 'db') {
     const nativeTagSchema = await readNativeTagSchemaFindings();

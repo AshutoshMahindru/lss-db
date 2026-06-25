@@ -1,5 +1,6 @@
 import { safeTag } from '../core/names';
 import {
+  allRelationships,
   allObjects,
   dashboardPageForObjectType,
   objectByName,
@@ -120,7 +121,7 @@ export function autoRelationshipTemplateViews(template: RegistryTemplate): ViewD
   const sections = templateBodySectionSet(template);
   const views: ViewDefinition[] = [];
 
-  for (const rel of registry.relationshipRegistry ?? []) {
+  for (const rel of allRelationships()) {
     const targets = rel.targets ?? [];
     if (!targets.map(safeTag).includes(safeTag(objectType))) continue;
     const related = [
@@ -211,7 +212,7 @@ export function objectTypesUsingProperty(property: string): string[] {
 
 export function relationshipPropertyNames(): string[] {
   const set = new Set<string>();
-  for (const rel of registry.relationshipRegistry ?? []) {
+  for (const rel of allRelationships()) {
     if (rel.property) set.add(String(rel.property));
   }
   return [...set];

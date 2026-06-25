@@ -19,6 +19,8 @@ import { safeTag } from '../core/names';
 import type { Result } from '../core/types';
 import {
   allObjects,
+  allPropertySpecs,
+  allRelationships,
   allTags,
   nativeDbClassTags,
   layerPages,
@@ -67,8 +69,8 @@ export async function step1(r: Result): Promise<void> {
     `entities:: ${(registry.entityTypes ?? []).length}`,
     `forms:: ${(registry.formTypes ?? []).length}`,
     `word-extender-types:: ${(registry.wordExtenderTypes ?? []).length}`,
-    `properties:: ${(registry.propertyRegistry ?? []).length}`,
-    `relationships:: ${(registry.relationshipRegistry ?? []).length}`,
+    `properties:: ${allPropertySpecs().length}`,
+    `relationships:: ${allRelationships().length}`,
     `templates:: ${(registry.templates ?? []).length}`,
   ].join('\n'));
 }
@@ -114,7 +116,7 @@ export async function step5(r: Result): Promise<void> {
 }
 
 export async function step6(r: Result): Promise<void> {
-  for (const rel of registry.relationshipRegistry ?? []) {
+  for (const rel of allRelationships()) {
     const prop = String(rel.property ?? 'unknown');
     await ensurePage(r, `Relationship/${prop}`);
     await appendManagedBlock(r, `Relationship/${prop}`, `${MODE}-rel-${prop}`, relationshipContract(rel));
@@ -188,12 +190,12 @@ export async function step10db(r: Result): Promise<void> {
     );
   }
   const nativeProperties = [
-    ...(registry.propertyRegistry ?? []),
+    ...allPropertySpecs(),
     { name: 'lss-object-type', type: 'default', cardinality: 'one' },
   ];
   const staleNativeNodeProperties = new Set<string>();
   for (const p of nativeProperties) {
-    const name = p.name ?? (p as { property?: string }).property ?? (p as { key?: string }).key;
+    const name = String(p.name ?? (p as { property?: unknown }).property ?? (p as { key?: unknown }).key ?? '').trim();
     if (!name) continue;
     const isNodeProperty = String((p as { type?: unknown }).type ?? '').toLowerCase() === 'node';
     try {
@@ -527,7 +529,7 @@ export async function stepVerify(r: Result): Promise<void> {
     await checkPage(missing, `${MODE === 'db' ? 'DB Tag' : 'Tag Reference'}/${tag}`);
     await checkPage(missing, `${MODE === 'db' ? 'Tag Properties' : 'Property Reference'}/${tag}`);
   }
-  for (const rel of registry.relationshipRegistry ?? []) await checkPage(missing, `Relationship/${rel.property}`);
+  for (const rel of allRelationships()) await checkPage(missing, `Relationship/${rel.property}`);
   for (const t of registry.templates ?? []) await checkPage(missing, t.name);
   for (const d of registry.dashboardDefinitions ?? []) await checkPage(missing, d.page);
   for (const e of starterWordEntries()) await checkPage(missing, e.page);

@@ -10,7 +10,7 @@ import {
 } from '../core/editor';
 import { safePageName, safeTag, visiblePageLabel } from '../core/names';
 import type { Result } from '../core/types';
-import { allObjects, objectByName, propertySpec, registry } from '../registry';
+import { allObjects, allRelationships, objectByName, propertySpec, registry } from '../registry';
 import type { RegistryObject } from '../registry/types';
 import { uniqueObjectProps } from './templates';
 
@@ -115,7 +115,7 @@ function relationshipPropertyForHint(object: RegistryObject, targetType: string)
     if (sourceProps.has('area')) return 'area';
     if (sourceProps.has('areas')) return 'areas';
   }
-  const candidates = (registry.relationshipRegistry ?? [])
+  const candidates = allRelationships()
     .filter((rel) => sourceProps.has(canonicalPropertyKey(rel.property ?? '')))
     .filter((rel) => {
       const targets = [

@@ -213,6 +213,18 @@ for (const relationship of registry.relationshipRegistry ?? []) {
     }
   }
 }
+if (
+  !registryIndexSource.includes('export function areaRelationshipPropertiesForObject') ||
+  !registryIndexSource.includes('export function allPropertySpecs') ||
+  !registryIndexSource.includes('export function allRelationships') ||
+  !registryIndexSource.includes('normalizeAreaRef(target.area)') ||
+  !registryIndexSource.includes('objectHasRelationshipToTarget') ||
+  !templatesSource.includes('areaRelationshipPropertiesForObject(o)') ||
+  !setupSource.includes('allPropertySpecs()') ||
+  !setupSource.includes('allRelationships()')
+) {
+  fail('registry must generate named same-area relationship fields for page materialisation and native setup');
+}
 for (const view of registry.viewDefinitions ?? []) {
   for (const tag of view.sourceTags ?? []) {
     if (!objectNames.has(tag) && !objectTags.has(tag)) fail(`view ${view.id} has unknown source tag ${tag}`);

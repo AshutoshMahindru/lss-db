@@ -4,6 +4,7 @@ import { safePageName, safeRef } from '../core/names';
 import { registryCreationCommands } from '../commands/registry-create';
 import type { Result } from '../core/types';
 import {
+  allRelationships,
   allTags,
   layerPages,
   registry,
@@ -136,7 +137,7 @@ export function layerHomeDefinitions(): LayerHome[] {
     id: 'relationships',
     home: 'LSS Layer Home - Relationships',
     title: 'Relationships',
-    pages: (registry.relationshipRegistry ?? []).map((r) => `Relationship/${r.property}`),
+    pages: allRelationships().map((r) => `Relationship/${r.property}`),
   });
   groups.push({
     id: 'templates',
@@ -234,7 +235,7 @@ export function simplePageTreeText(): string {
   node('Forms', 2);
   for (const o of sorted(registry.formTypes ?? [], (x) => x.schemaPage)) node(o.schemaPage, 3);
   node('Relationships', 2);
-  for (const r of sorted(registry.relationshipRegistry ?? [], (x) => `Relationship/${x.property}`)) {
+  for (const r of sorted(allRelationships(), (x) => `Relationship/${x.property}`)) {
     node(`Relationship/${r.property}`, 3);
   }
   node('Dashboards', 2);

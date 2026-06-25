@@ -13,7 +13,7 @@ import { entityIdentity, resolveUpsertPropertyValue } from '../core/db-propertie
 import { formatError, sleep } from '../core/runner';
 import { pageForCanonical, safeMarkdownRefs, safeTag, todayRef } from '../core/names';
 import type { Result } from '../core/types';
-import { normalizeAreaRef, objectByName, propertySpec, registry, templateNameFromRegistry } from '../registry';
+import { areaRelationshipPropertiesForObject, normalizeAreaRef, objectByName, propertySpec, registry, templateNameFromRegistry } from '../registry';
 import type { RegistryObject, RegistryTemplate } from '../registry/types';
 import { legacyTemplateText } from './contracts';
 import { ensurePlaceholderPagesForNodeValue } from './repair-user-properties';
@@ -72,7 +72,7 @@ function propertyLineText(prop: TemplateProperty): string {
 export function uniqueObjectProps(o: RegistryObject): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const p of [...(o.requiredProperties ?? []), ...(o.properties ?? [])]) {
+  for (const p of [...(o.requiredProperties ?? []), ...(o.properties ?? []), ...areaRelationshipPropertiesForObject(o)]) {
     if (!p || seen.has(p)) continue;
     seen.add(p);
     out.push(p);
