@@ -2,10 +2,12 @@ import {
   canonicalPropertyKey,
   entityIdentity,
   isDateProperty,
+  pageHasClassTag,
 } from '../core/db-properties';
 import { PLUGIN_ID } from '../config';
-import { looksLikeUuid } from '../core/names';
-import { pageVisibleName, resolvePageFromIdentity } from '../core/editor';
+import { looksLikeUuid, safeTag } from '../core/names';
+import { blockId, ensurePage, ensureTagByName, getPage } from '../core/editor';
+import { formatError } from '../core/runner';
 import { propertySpec } from '../registry';
 import type { Result } from '../core/types';
 
@@ -124,26 +126,48 @@ export function isPlaceholderNodeDefault(value: string): boolean {
   return isPlaceholderNodeLabel(value);
 }
 
-export async function valueResolvesToPlaceholderNode(value: unknown): Promise<boolean> {
-  if (value == null) return false;
-  if (Array.isArray(value)) {
-    for (const item of value) if (await valueResolvesToPlaceholderNode(item)) return true;
-    return false;
+function placeholderPageNames(value: string): string[] {
+  const names = new Set<string>();
+  const re = /\[\[(LSS Placeholder(?:\/| - )[^\]]+)\]\]/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(String(value ?? '')))) if (match[1]) names.add(match[1]);
+  return [...names];
+}
+
+function nodePropertyTargetTags(property: string): string[] {
+  const spec = propertySpec(canonicalPropertyKey(property));
+  return [...new Set(((spec as { targets?: unknown[] } | undefined)?.targets ?? [])
+    .map(String)
+    .map((target) => safeTag(target))
+    .filter((target) => target && !target.includes('/')))];
+}
+
+async function ensurePlaceholderTargetTag(result: Result, pageName: string, target: string): Promise<void> {
+  if (!logseq.Editor.addBlockTag) return;
+  const page = await getPage(pageName);
+  const pageBlockId = blockId(page);
+  const pageIdentity = entityIdentity(page as Record<string, unknown> | null) ?? pageBlockId;
+  if (!pageBlockId || !pageIdentity || await pageHasClassTag(pageIdentity, target)) return;
+  const tagObj = await ensureTagByName(result, target);
+  const tagId = entityIdentity(tagObj);
+  if (!tagId) return;
+  try {
+    await logseq.Editor.addBlockTag(pageBlockId, tagId);
+    result.actions.push(`ADD placeholder target tag: [[${pageName}]] #${target}`);
+  } catch (error) {
+    result.errors.push(`placeholder target tag ${pageName} #${target}: ${formatError(error)}`);
   }
-  if (typeof value === 'object') {
-    const label = pageVisibleName(value as Record<string, unknown>);
-    if (isPlaceholderNodeLabel(label)) return true;
-    const record = value as Record<string, unknown>;
-    const id = record.id ?? record[':db/id'] ?? record['db/id'];
-    if (id == null) return false;
-    const page = await resolvePageFromIdentity(id as string | number).catch(() => null);
-    return isPlaceholderNodeLabel(pageVisibleName(page as Record<string, unknown> | null, ''));
+}
+
+export async function ensurePlaceholderPagesForNodeValue(result: Result, property: string, value: string): Promise<void> {
+  const targets = nodePropertyTargetTags(property);
+  for (const pageName of placeholderPageNames(value)) {
+    await ensurePage(result, pageName, {
+      'lss-kind': 'Template Placeholder',
+      'lss-status': 'placeholder',
+    });
+    for (const target of targets) await ensurePlaceholderTargetTag(result, pageName, target);
   }
-  const raw = String(value ?? '').trim();
-  if (isPlaceholderNodeLabel(raw)) return true;
-  if (!/^\d+$/.test(raw)) return false;
-  const page = await resolvePageFromIdentity(raw).catch(() => null);
-  return isPlaceholderNodeLabel(pageVisibleName(page as Record<string, unknown> | null, ''));
 }
 
 export function discardPlaceholderNodeDefaults(props: Map<string, string>): string[] {

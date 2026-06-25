@@ -43,12 +43,7 @@ import {
 } from './repair-dashboard';
 import { applyIncomingSourceTagsForPage } from './repair-source-tags';
 import { materializeTemplateSections } from './repair-template';
-import {
-  cleanForeignPluginPropertyCopies,
-  isForeignPluginRegistryPropertyKey,
-  isPlaceholderNodeDefault,
-  readDatascriptUserPropertyValue,
-} from './repair-user-properties';
+import { cleanForeignPluginPropertyCopies, ensurePlaceholderPagesForNodeValue, isForeignPluginRegistryPropertyKey, isPlaceholderNodeDefault, readDatascriptUserPropertyValue } from './repair-user-properties';
 import { pageLooksMaterializable, recentTaggedLssPageFallback } from './repair-current-page';
 import { ensureMaterialiseNativeProperties } from './repair-native-properties';
 import { removeNativeTagSchemaProperties } from './setup';
@@ -1260,18 +1255,6 @@ async function normalizeDatePropertyLineInContent(
   }
 }
 
-async function ensurePlaceholderPagesForNodeValue(result: Result, value: string): Promise<void> {
-  const re = /\[\[(LSS Placeholder(?:\/| - )[^\]]+)\]\]/g;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(String(value ?? '')))) {
-    if (!match[1]) continue;
-    await ensurePage(result, match[1], {
-      'lss-kind': 'Template Placeholder',
-      'lss-status': 'placeholder',
-    });
-  }
-}
-
 async function repairUpsertPageProperty(
   result: Result,
   pageBlockId: string,
@@ -1290,11 +1273,8 @@ async function repairUpsertPageProperty(
       if (cardinality === 'many') {
         result.notes.push(`Empty many-valued node property ${shortKey} left unset; Logseq rejects empty array writes.`);
         return false;
-      } else if (options.preserveEmpty) {
-        result.notes.push(`Required node property ${shortKey} needs a selected page value.`);
-      } else {
-        result.notes.push(`Schema node property ${shortKey} needs a selected page value before Logseq can display it.`);
-      }
+      } else if (options.preserveEmpty) result.notes.push(`Required node property ${shortKey} needs a selected page value.`);
+      else result.notes.push(`Schema node property ${shortKey} needs a selected page value before Logseq can display it.`);
       return false;
     }
     if (currentValue != null) {
@@ -1306,16 +1286,18 @@ async function repairUpsertPageProperty(
     return false;
   }
   try {
-    const isNodeRel =
-      (await isDbGraph()) &&
-      String(propertySpec(shortKey)?.type ?? '').toLowerCase() === 'node';
+    const isNodeRel = (await isDbGraph()) && String(propertySpec(shortKey)?.type ?? '').toLowerCase() === 'node';
     const currentValue = await readCurrentBlockProperty(pageBlockId, shortKey);
     const ownedCurrentValue = isDateProperty(shortKey) ? await readDatascriptUserPropertyValue(pageBlockId, shortKey) : currentValue;
-    if (isNodeRel && isPlaceholderNodeDefault(value) && isDbPageRefValue(currentValue)) {
-      result.actions.push(`SKIP placeholder default for existing node property: ${shortKey}`);
-      return false;
+    if (isNodeRel && isPlaceholderNodeDefault(value)) {
+      await ensurePlaceholderPagesForNodeValue(result, shortKey, value);
+      if (isDbPageRefValue(currentValue)) {
+        result.actions.push(`SKIP placeholder default for existing node property: ${shortKey}`);
+        return false;
+      }
+    } else if (isNodeRel) {
+      await ensurePlaceholderPagesForNodeValue(result, shortKey, value);
     }
-    if (isNodeRel) await ensurePlaceholderPagesForNodeValue(result, value);
     const upsertValue = await resolveUpsertPropertyValue(shortKey, value);
     if (isDateProperty(shortKey)) {
       const nextJournalDay = toJournalDay(value);

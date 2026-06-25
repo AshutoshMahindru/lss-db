@@ -288,9 +288,27 @@ if (
   !templatesSource.includes('pageForCanonical(`LSS Placeholder/${target || prop}`)') ||
   !templatesSource.includes('pageForCanonical(area)') ||
   !repairSource.includes('ensurePlaceholderPagesForNodeValue') ||
-  !repairSource.includes('Template Placeholder')
+  !repairUserPropertiesSource.includes('Template Placeholder')
 ) {
   fail('repair must materialize unresolved node properties with canonical controlled placeholder page refs');
+}
+if (
+  !templatesSource.includes('return placeholderNodePropertyValue(p, spec as { targets?: unknown[] } | undefined);') ||
+  !templatesSource.includes('ensurePlaceholderPagesForNodeValue(result, prop.key, prop.value)') ||
+  !repairUserPropertiesSource.includes('export async function ensurePlaceholderPagesForNodeValue') ||
+  !repairUserPropertiesSource.includes('ADD placeholder target tag') ||
+  !repairUserPropertiesSource.includes('pageHasClassTag(pageIdentity, target)') ||
+  !repairSource.includes('ensurePlaceholderPagesForNodeValue(result, shortKey, value)')
+) {
+  fail('node placeholders must remain visible selector values and target-tagged for typed fields');
+}
+if (
+  repairUserPropertiesSource.includes('export async function cleanNodePropertyUpsertValue') ||
+  repairSource.includes('nonPlaceholderNodeValues(currentValue)') ||
+  repairSource.includes('REMOVE placeholder node value(s)') ||
+  repairSource.includes('cleanedNodePlaceholder')
+) {
+  fail('materialise must leave placeholder removal to the selector UI');
 }
 if (
   !advancedQueryBlocksSource.includes('upsertBlockPropertyViaHost') ||

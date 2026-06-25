@@ -16,6 +16,7 @@ import type { Result } from '../core/types';
 import { normalizeAreaRef, objectByName, propertySpec, registry, templateNameFromRegistry } from '../registry';
 import type { RegistryObject, RegistryTemplate } from '../registry/types';
 import { legacyTemplateText } from './contracts';
+import { ensurePlaceholderPagesForNodeValue } from './repair-user-properties';
 import {
   advancedDashboardQueryEdnForViewAsync,
   advancedQueryBlockContent,
@@ -106,7 +107,9 @@ export function defaultPropertyValue(prop: string, o: RegistryObject): string {
   if (p === 'Deadline' || p === 'deadline') return '';
   if (p === 'confidentiality') return 'internal';
   const spec = propertySpec(p);
-  if (String(spec?.type ?? '').toLowerCase() === 'node') return placeholderNodePropertyValue(p, spec as { targets?: unknown[] } | undefined);
+  if (String(spec?.type ?? '').toLowerCase() === 'node') {
+    return placeholderNodePropertyValue(p, spec as { targets?: unknown[] } | undefined);
+  }
   return '';
 }
 
@@ -259,15 +262,6 @@ async function upsertTemplateProperty(
   }
 }
 
-async function ensureTemplatePlaceholderPage(result: Result, value: string): Promise<void> {
-  const match = String(value ?? '').match(/\[\[(LSS Placeholder(?:\/| - )[^\]]+)\]\]/);
-  if (!match?.[1]) return;
-  await ensurePage(result, match[1], {
-    'lss-kind': 'Template Placeholder',
-    'lss-status': 'placeholder',
-  });
-}
-
 async function removeTemplateProperty(
   result: Result,
   rootBlockId: string,
@@ -335,7 +329,7 @@ async function syncTemplateStructure(result: Result, rootBlockId: string, t: Reg
   // This keeps the template definition clean; properties come from RegistryObject.
   const properties = templateProperties(t);
   for (const prop of properties) {
-    await ensureTemplatePlaceholderPage(result, prop.value);
+    await ensurePlaceholderPagesForNodeValue(result, prop.key, prop.value);
     await upsertTemplateProperty(result, rootBlockId, prop.key, prop.value, displayName);
   }
 
