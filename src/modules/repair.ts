@@ -46,7 +46,7 @@ import { materializeTemplateSections } from './repair-template';
 import {
   cleanForeignPluginPropertyCopies,
   isForeignPluginRegistryPropertyKey,
-  isPluginOwnedRegistryPropertyKey,
+  isPlaceholderNodeDefault,
   readDatascriptUserPropertyValue,
 } from './repair-user-properties';
 import { pageLooksMaterializable, recentTaggedLssPageFallback } from './repair-current-page';
@@ -845,7 +845,7 @@ async function readDbPagePropertyMap(
     if (!src) continue;
     for (const [key, value] of Object.entries(src)) {
       if (key === 'tags' || canonicalPropertyKey(key) === 'tags') continue;
-      if (isPluginOwnedRegistryPropertyKey(key) || isForeignPluginRegistryPropertyKey(key)) continue;
+      if (isForeignPluginRegistryPropertyKey(key)) continue;
       const shortKey = canonicalPropertyKey(key);
       const str = await dbPropertyValueToRepairString(result, shortKey, value);
       if (str) map.set(shortKey, str);
@@ -1311,6 +1311,10 @@ async function repairUpsertPageProperty(
       String(propertySpec(shortKey)?.type ?? '').toLowerCase() === 'node';
     const currentValue = await readCurrentBlockProperty(pageBlockId, shortKey);
     const ownedCurrentValue = isDateProperty(shortKey) ? await readDatascriptUserPropertyValue(pageBlockId, shortKey) : currentValue;
+    if (isNodeRel && isPlaceholderNodeDefault(value) && isDbPageRefValue(currentValue)) {
+      result.actions.push(`SKIP placeholder default for existing node property: ${shortKey}`);
+      return false;
+    }
     if (isNodeRel) await ensurePlaceholderPagesForNodeValue(result, value);
     const upsertValue = await resolveUpsertPropertyValue(shortKey, value);
     if (isDateProperty(shortKey)) {

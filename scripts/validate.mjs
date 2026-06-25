@@ -466,6 +466,10 @@ const currentReadMatch = repairSource.match(/async function readCurrentBlockProp
 if (!currentReadMatch || currentReadMatch[0].includes('isPluginOwnedRegistryPropertyKey(key) continue')) {
   fail('current page property reads must include plugin-owned registry properties so existing DB page properties are recognized');
 }
+const pagePropertyMapMatch = repairSource.match(/async function readDbPagePropertyMap[\s\S]*?async function readDbPageTags/);
+if (!pagePropertyMapMatch || pagePropertyMapMatch[0].includes('isPluginOwnedRegistryPropertyKey(key)')) {
+  fail('materialise page property collection must include plugin-owned registry properties so auto-sync preserves DB picker selections');
+}
 if (!repairUserPropertiesSource.includes('isForeignPluginRegistryPropertyKey') || !repairSource.includes('isForeignPluginRegistryPropertyKey(key)')) {
   fail('repair must ignore stale foreign plugin.property namespaces such as _test_plugin when reading LSS page properties');
 }
