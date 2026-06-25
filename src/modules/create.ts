@@ -24,6 +24,7 @@ import {
   dashboardPageForObjectType,
   normalizeAreaRef,
   objectByName,
+  pageForCanonical,
   propertySpec,
   registry,
 } from '../registry';
@@ -54,7 +55,7 @@ function defaultPropertyValueForCreate(
     return value == null ? '' : String(value);
   }
   const area = normalizeAreaRef(o.area);
-  if (p === 'area' || p === 'areas') return `[[${area}]]`;
+  if (p === 'area' || p === 'areas') return `[[${pageForCanonical(area)}]]`;
   if (p === 'status') return safeTag(o.tag) === 'ActionItem' ? 'Todo' : 'active';
   if (p === 'priority' || p === 'Priority') return safeTag(o.tag) === 'ActionItem' ? 'Medium' : 'medium';
   if (['date', 'captured-on', 'asked-on', 'decided-on', 'start-date', 'review-date', 'created-on'].includes(p)) {
@@ -66,8 +67,8 @@ function defaultPropertyValueForCreate(
 function propLine(prop: string, o: RegistryObject): string {
   const p = String(prop);
   const area = normalizeAreaRef(o.area);
-  if (p === 'area') return `area:: [[${area}]]`;
-  if (p === 'areas') return `areas:: [[${area}]]`;
+  if (p === 'area') return `area:: [[${pageForCanonical(area)}]]`;
+  if (p === 'areas') return `areas:: [[${pageForCanonical(area)}]]`;
   if (p === 'status') return safeTag(o.tag) === 'ActionItem' ? 'Status:: Todo' : 'status:: active';
   if (p === 'priority') return safeTag(o.tag) === 'ActionItem' ? 'Priority:: Medium' : 'priority:: medium';
   if (['date', 'captured-on', 'asked-on', 'decided-on', 'start-date', 'review-date', 'created-on'].includes(p)) {

@@ -5,7 +5,7 @@ import type { Result } from '../core/types';
 import { templateDefByObjectType } from '../registry';
 import type { RegistryObject } from '../registry/types';
 import { parseTemplateOutline } from './templates';
-import { sectionNameFromLine } from './queries';
+import { sectionNameFromLine, viewDefinitionsSafe } from './queries';
 
 function normalizedSection(value: string): string {
   return String(value ?? '')
@@ -32,10 +32,13 @@ function templateSectionNames(obj: RegistryObject): string[] {
   const template = templateDefByObjectType(obj.name);
   const seen = new Set<string>();
   const out: string[] = [];
+  const querySections = new Set(
+    template ? viewDefinitionsSafe(template).map((view) => normalizedSection(String(view.section ?? ''))) : [],
+  );
   const add = (section: string) => {
     const clean = String(section ?? '').replace(/#Template\b/gi, '').trim();
     const key = normalizedSection(clean);
-    if (!clean || !key || seen.has(key)) return;
+    if (!clean || !key || seen.has(key) || querySections.has(key)) return;
     seen.add(key);
     out.push(clean);
   };

@@ -23,6 +23,14 @@ export function queryValue(value: unknown): string {
   return `"${raw.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
+function ednString(value: string): string {
+  return `"${String(value ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+export function queryTitleForView(view: ViewDefinition): string {
+  return String(normTagList(view.sourceTags)[0] ?? view.section ?? view.title ?? 'Query').trim() || 'Query';
+}
+
 export function filterProps(filter: { property?: string; propertyAny?: string[] }): string[] {
   if (Array.isArray(filter.propertyAny)) {
     return filter.propertyAny.map((p) => String(p).trim()).filter(Boolean);
@@ -254,7 +262,7 @@ export async function advancedDashboardQueryEdnForViewAsync(
   _currentPageName?: string,
 ): Promise<string> {
   const body = await dbDashboardQueryForViewAsync(view, '<% current page %>', _currentPageName);
-  return body ? `{:query ${body}}` : '';
+  return body ? `{:title ${ednString(queryTitleForView(view))} :query ${body}}` : '';
 }
 
 /** Raw EDN for /Advanced Query (no #+BEGIN_QUERY wrapper — deprecated in DB v2). */

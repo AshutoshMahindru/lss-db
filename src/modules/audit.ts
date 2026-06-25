@@ -301,7 +301,7 @@ async function auditDashboardSections(blocks: any[], pageName: string): Promise<
         findings.push({
           ruleId: 'LSS-AUD-010-dashboard-query-backed-sections',
           severity: 'ERROR',
-          message: `${pageName}: dashboard section "${section}" has no query-backed child block`,
+          message: `${pageName}: dashboard section "${section}" has no query-backed block`,
           suggestedFix: 'Run lss: materialise page or insert dashboard with lss: 35-37.',
         });
       }
@@ -315,7 +315,7 @@ function formatAuditReport(pageName: string, findings: AuditFinding[]): string {
   const lines: string[] = [];
   lines.push(`Audit for ${pageName}`);
   lines.push(`checked-at:: ${new Date().toISOString()}`);
-  lines.push(`plugin-version:: 2.0.12`);
+  lines.push(`plugin-version:: 2.0.15`);
   lines.push('');
   if (!findings.length) {
     lines.push('## Summary');

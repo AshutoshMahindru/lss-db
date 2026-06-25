@@ -23,14 +23,13 @@ export function dashboardBody(kind: string): string {
 
   const lines = [`- LSS ${kind} Dashboard`, `  dashboard-type:: ${kind}`, `  generated-on:: ${todayRef()}`];
   for (const section of sections) {
-    lines.push(`  - ${section}`);
     const view = viewBySection.get(section);
     // Do not embed query expressions here. On DB graphs the correct form is a native advanced
-    // query block (configured via host script + :title in EDN). Post-insert setup installs working queries.
+    // query block. Post-insert setup installs titled page-level queries for view-backed sections.
     if (!view) {
+      lines.push(`  - ${section}`);
       lines.push(`    - Query intent: show ${section} related to the current page.`);
     }
-    // queries added under section by setup/repair with proper title from view.section
   }
   return lines.join('\n');
 }

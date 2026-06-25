@@ -4,7 +4,7 @@
 
 Version: 2026-06-21  
 Repository: `AshutoshMahindru/lss-db`  
-Plugin: `logseq-lss-db-final-plugin` v2.0.12
+Plugin: `logseq-lss-db-final-plugin` v2.0.15
 
 ## Executive Summary
 
@@ -610,7 +610,7 @@ generate the instance artifacts for that page:
 - Materialize all `requiredProperties` and registered optional properties from the matching `RegistryObject`, or the equivalent registered area metadata for area pages.
 - Fill default values from the registry.
 - Infer contextual relationship properties from current page context and instance hint tags where possible.
-- Use controlled `LSS Placeholder/<target>` page refs when a node relationship cannot be inferred, so Logseq DB can still display the full page-property schema. Replace placeholders with real page refs as soon as the relationship is known.
+- Use controlled flat-safe `LSS Placeholder - <target>` page refs when a node relationship cannot be inferred, so Logseq DB can still display the full page-property schema. Replace placeholders with real page refs as soon as the relationship is known.
 - Insert or repair layout sections from the matching registry template.
 - Insert or repair query-backed sections for dashboard-like templates.
 - Transpose resolved instance hints into matching page sections where the template has an appropriate section.
@@ -633,11 +633,11 @@ Marketing
 
 lss-object-type:: Function
 venture:: [[FTV]]
-area:: [[Area/Work]]
+area:: [[Area - Work]]
 status:: active
-owner:: [[LSS Placeholder/Person]]
+owner:: [[LSS Placeholder - Person]]
 review-date:: [[Jun 20th, 2026]]
-related-to:: [[LSS Placeholder/related-to]]
+related-to:: [[LSS Placeholder - related-to]]
 
 Notes
 - ...
@@ -1175,7 +1175,8 @@ review-date:: [[Jun 20th, 2026]]
 Dashboard pages use advanced query block structure so they behave as Logseq DB query blocks, but the query payload is Logseq query DSL:
 
 ```text
-{:query (and (tags Function)
+{:title "Function"
+ :query (and (tags Function)
              (property :plugin.property.logseq-lss-db-final-plugin/venture <% current page %>))}
 ```
 
@@ -1188,11 +1189,18 @@ This was chosen because the latest diagnostics showed:
 The current canonical path is:
 
 ```text
-DB /Advanced Query block
+Direct page-level DB /Advanced Query block visibly titled from the source type or section
   -> code child
     -> EDN map
+      -> :title repeats the visible query title
       -> :query contains Logseq DSL
 ```
+
+View-backed template/dashboard sections do not use a separate text heading
+whose child is the query. Materialization and repair remove empty legacy
+section wrappers, keep any user-authored non-query content, and create the
+titled advanced query block at the same page indent level as ordinary sections.
+The title belongs to the query block itself, not to a wrapper block above it.
 
 The diagnostic signal for a healthy Venture Functions section is:
 

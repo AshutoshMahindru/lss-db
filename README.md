@@ -1,4 +1,4 @@
-# LSS DB Final Plugin v2.0.12
+# LSS DB Final Plugin v2.0.15
 
 Modular TypeScript rewrite of the LSS DB Final plugin. The monolithic `index.ts` has been split into focused modules under `src/` while keeping the full `registry.json` build-pack unchanged.
 
@@ -130,9 +130,9 @@ lss: 49add-layer-links-to-home
 
 ## Template note
 
-Templates are layout-only (sections + query children). `Apply template to tags` is disabled for DB entity templates so tagging a journal block does not make that journal block the entity. Properties are injected onto the entity page root from the RegistryObject that matches the `appliesTo` tag.
+Templates are layout-only: ordinary note sections stay as sections, while view-backed sections materialize as direct titled query blocks. `Apply template to tags` is disabled for DB entity templates so tagging a journal block does not make that journal block the entity. Properties are injected onto the entity page root from the RegistryObject that matches the `appliesTo` tag.
 
-For template setup, open `LSS Native Templates`, create an empty block, click inside it, and run `lss: 8setup-templates`. Re-run to remove old tag-applied template settings and re-sync missing structure/query children. If an entity was tagged on a journal page, run `lss: materialise page` on that journal; it will create/update the entity page and replace the journal tag block with a page link.
+For template setup, open `LSS Native Templates`, create an empty block, click inside it, and run `lss: 8setup-templates`. Re-run to remove old tag-applied template settings and re-sync missing structure/query blocks. If an entity was tagged on a journal page, run `lss: materialise page` on that journal; it will create/update the entity page and replace the journal tag block with a page link.
 
 ## Build
 
@@ -148,4 +148,4 @@ Load the plugin from `/Users/ashutoshmahindru/Documents/LSS-DB` in Logseq (Devel
 
 ## Build status
 
-v2.0.12 date materialise fix — DB date properties resolve to journal page entity ids instead of raw journal-day numbers.
+v2.0.15 query title fix — DB advanced query blocks remain page-level, carry `:title` in query EDN, and preserve their visible title after host-side query-child setup.

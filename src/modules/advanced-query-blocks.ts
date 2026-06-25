@@ -342,6 +342,10 @@ const INLINE_HOST_QUERY_SETUP = `
     if (!parent) return null;
     return parent[QUERY_PROP] ?? parent[':' + QUERY_PROP] ?? null;
   }
+  function rawQueryParentContent(parent) {
+    var text = String((parent && (parent[':block/content'] ?? parent.content ?? parent.title)) ?? '').trim();
+    return /^\\s*\\{[\\s\\S]*:query\\s+(?:\\[:find|\\()/i.test(text) || /#\\+BEGIN_QUERY/i.test(text);
+  }
 
   async function waitForChild(pId, pUuid, maxTries = 6) {
     for (let i = 0; i < maxTries; i++) {
@@ -388,7 +392,7 @@ const INLINE_HOST_QUERY_SETUP = `
     await upsertProp(parentRef, QUERY_PROP, childId);
     try {
       await updateBlockTitle(childRef, edn);
-      await updateBlockTitle(parentRef, '');
+      if (rawQueryParentContent(parent)) await updateBlockTitle(parentRef, '');
     } catch (_titleError) {}
     // Set display :code late, after titles are in place (more reliable)
     await upsertDisplayTypeCode(childEnt, childId);
@@ -1119,7 +1123,9 @@ export async function configureDbAdvancedQueryBlock(
 
       await setProp(childId, QUERY_CODE_LANG_KEY, 'clojure');
       await setProp(parentId, QUERY_PROPERTY_KEY, childId);
-      await updateBlockContent(result, block, '', 'Clear raw EDN from query parent shell');
+      if (isAdvancedQueryBlockContent(String(block?.content ?? ''))) {
+        await updateBlockContent(result, block, '', 'Clear raw EDN from query parent shell');
+      }
       await setProp(parentId, 'block/collapsed?', false);
     }
 
@@ -1225,7 +1231,9 @@ export async function forceCreateQueryChild(result: Result, block: any, ednConte
 
   await upsertQueryBlockProperty(childId, QUERY_CODE_LANG_KEY, 'clojure');
   await upsertQueryBlockProperty(parentId, QUERY_PROPERTY_KEY, childId);
-  await updateBlockContent(result, block, '', 'Clear parent');
+  if (isAdvancedQueryBlockContent(String(block?.content ?? ''))) {
+    await updateBlockContent(result, block, '', 'Clear parent');
+  }
   await upsertQueryBlockProperty(parentId, 'block/collapsed?', false);
 
   const after = await finalizeDbAdvancedQueryBlockUi(result, block);
@@ -1297,7 +1305,9 @@ export async function fixDbQueryChild(result: Result, block: any, ednContent: st
 
   await upsertQueryBlockProperty(childId, QUERY_CODE_LANG_KEY, 'clojure');
   await upsertQueryBlockProperty(parentId, QUERY_PROPERTY_KEY, childId);
-  await updateBlockContent(result, block, '', 'Clear parent content');
+  if (isAdvancedQueryBlockContent(String(block?.content ?? ''))) {
+    await updateBlockContent(result, block, '', 'Clear parent content');
+  }
   await upsertQueryBlockProperty(parentId, 'block/collapsed?', false);
 
   const after = await finalizeDbAdvancedQueryBlockUi(result, block);

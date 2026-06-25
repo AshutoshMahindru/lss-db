@@ -6,7 +6,6 @@ import {
 import type { Result } from '../core/types';
 import { propertySpec } from '../registry';
 import type { RegistryObject } from '../registry/types';
-import { resetNativeNodeProperty } from './setup';
 import { uniqueObjectProps } from './templates';
 
 const nativeEnsureCache = new Set<string>();
@@ -19,8 +18,10 @@ async function ensureCachedNativeProperty(result: Result, key: string): Promise<
   const resetReason = await nativePropertyResetReasonForSpec(spec);
   if (resetReason) {
     result.notes.push(`Native property ${shortKey}: stale schema detected (${resetReason}).`);
-    result.notes.push(`Materialise detected stale native ${shortKey} schema; resetting before page property writes.`);
-    await resetNativeNodeProperty(result, shortKey);
+    result.notes.push(
+      `Materialise left native ${shortKey} unchanged. Run an explicit native property reset only after backing up non-LSS values.`,
+    );
+    nativeEnsureCache.add(shortKey);
     return;
   }
   const ensured = await ensureNativeProperty(spec, { refreshExistingSchema: false });

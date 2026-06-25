@@ -83,6 +83,11 @@
     return parent[QUERY_PROP] ?? parent[':' + QUERY_PROP] ?? null;
   }
 
+  function rawQueryParentContent(parent) {
+    var text = String((parent && (parent[':block/content'] ?? parent.content ?? parent.title)) ?? '').trim();
+    return /^\s*\{[\s\S]*:query\s+(?:\[:find|\()/i.test(text) || /#\+BEGIN_QUERY/i.test(text);
+  }
+
   async function waitForChild(pId, pUuid, maxTries = 6) {
     for (let i = 0; i < maxTries; i++) {
       await new Promise(r => setTimeout(r, 80));
@@ -134,7 +139,7 @@
     await upsertProp(parentRef, QUERY_PROP, childId);
     try {
       await updateBlockTitle(childRef, edn);
-      await updateBlockTitle(parentRef, '');
+      if (rawQueryParentContent(parent)) await updateBlockTitle(parentRef, '');
     } catch (titleError) {
       /* title may already be set by plugin IPC; display-type is the critical UI field */
     }

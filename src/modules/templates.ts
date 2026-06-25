@@ -23,6 +23,7 @@ import {
   isAdvancedQueryBlockContent,
   isQueryLikeContent,
   queryBlockContent,
+  queryTitleForView,
   sectionNameFromLine,
   simpleQueryForView,
   simpleQueryForViewAsync,
@@ -83,7 +84,7 @@ export function placeholderNodePropertyValue(prop: string, spec: { targets?: unk
     .map(String)
     .map((value) => safeTag(value))
     .find((value) => value && !value.includes('/'));
-  return `[[LSS Placeholder/${target || prop}]]`;
+  return `[[${pageForCanonical(`LSS Placeholder/${target || prop}`)}]]`;
 }
 
 export function defaultPropertyValue(prop: string, o: RegistryObject): string {
@@ -93,7 +94,7 @@ export function defaultPropertyValue(prop: string, o: RegistryObject): string {
     return value == null ? '' : String(value);
   }
   const area = normalizeAreaRef(o.area);
-  if (p === 'area' || p === 'areas') return `[[${area}]]`;
+  if (p === 'area' || p === 'areas') return `[[${pageForCanonical(area)}]]`;
   if (p === 'status') return safeTag(o.tag) === 'ActionItem' ? 'Todo' : 'active';
   if (p === 'Status') return 'Todo';
   if (p === 'priority' || p === 'Priority') return safeTag(o.tag) === 'ActionItem' ? 'Medium' : 'medium';
@@ -191,7 +192,7 @@ async function injectQueriesIntoBatch(batch: BatchBlock, t: RegistryTemplate): P
       const view = viewBySection.get(section);
       const queryContent = view ? await queryContentForView(view) : null;
       if (queryContent) {
-        const qTitle = (view && view.sourceTags && view.sourceTags.length ? view.sourceTags[0] : section) || section;
+        const qTitle = queryTitleForView(view);
         const isDb = await isDbGraph();
         if (isDb && queryContent.startsWith('{')) {
           // For DB: replace section name with the title query at this indent level (level 0).
@@ -259,7 +260,7 @@ async function upsertTemplateProperty(
 }
 
 async function ensureTemplatePlaceholderPage(result: Result, value: string): Promise<void> {
-  const match = String(value ?? '').match(/\[\[(LSS Placeholder\/[^\]]+)\]\]/);
+  const match = String(value ?? '').match(/\[\[(LSS Placeholder(?:\/| - )[^\]]+)\]\]/);
   if (!match?.[1]) return;
   await ensurePage(result, match[1], {
     'lss-kind': 'Template Placeholder',
@@ -341,28 +342,27 @@ async function syncTemplateStructure(result: Result, rootBlockId: string, t: Reg
   const refreshed = await logseq.Editor.getBlock(rootBlockId, { includeChildren: true });
   const views = viewDefinitionsSafe(t);
   const viewBySection = new Map(views.map((view) => [String(view.section ?? '').trim(), view]));
+  const findViewBySectionOrTitle = (name: string) => {
+    let view = viewBySection.get(name);
+    if (view) return view;
+    for (const v of views) {
+      const title = queryTitleForView(v);
+      if (title === name || v.section === name) return v;
+    }
+    return undefined;
+  };
 
   for (const sectionBlock of refreshed?.children ?? []) {
     const sectionName = sectionNameFromLine(String(sectionBlock?.content ?? ''));
     if (!sectionName) continue;
-    let view = viewBySection.get(sectionName);
-    if (!view) {
-      // lookup by title or source tag, in case batch overwrote section name to qTitle
-      for (const v of views) {
-        const t = (v.sourceTags && v.sourceTags.length ? v.sourceTags[0] : v.section) || v.section;
-        if (t === sectionName || v.section === sectionName) {
-          view = v;
-          break;
-        }
-      }
-    }
+    const view = findViewBySectionOrTitle(sectionName);
     const queryContent = view ? await queryContentForView(view) : null;
     if (!queryContent) continue;
     const sectionChildren = sectionBlock?.children ?? [];
     const sectionId = blockId(sectionBlock);
     if (!sectionId) continue;
     const isDb = await isDbGraph();
-    const qTitle = (view && view.sourceTags && view.sourceTags.length ? view.sourceTags[0] : sectionName) || sectionName;
+    const qTitle = queryTitleForView(view);
     if (isDb && queryContent.startsWith('{')) {
       const currentContent = String(sectionBlock?.content ?? '').trim();
       if (currentContent === qTitle) {
@@ -370,27 +370,25 @@ async function syncTemplateStructure(result: Result, rootBlockId: string, t: Reg
         await configureDbAdvancedQueryBlock(result, sectionBlock, queryContent);
         await updateBlockContent(result, sectionBlock, qTitle, `Set title for query`);
       } else {
-        // remove old query children
+        // Convert legacy section-wrapper templates into a titled query block at the same indent.
         for (const ch of sectionChildren) {
-          if (isQueryLikeContent(String(ch?.content ?? ''))) {
+          const text = String(ch?.content ?? '').trim();
+          if (isQueryLikeContent(text) || text === '-' || !text) {
             if (logseq.Editor.removeBlock) {
               await logseq.Editor.removeBlock(blockId(ch)).catch(() => {});
             }
           }
         }
-        const shellId = await insertChildBlock(result, sectionId, qTitle, `INSERT titled advanced query shell for ${sectionName}`, true);
-        if (shellId) {
-          await configureDbAdvancedQueryBlock(result, { uuid: shellId } as any, queryContent);
-          await updateBlockContent(result, { uuid: shellId } as any, qTitle, `Set title for query`);
-        }
+        await updateBlockContent(result, sectionBlock, qTitle, `Set title for query`);
+        await configureDbAdvancedQueryBlock(result, sectionBlock, queryContent);
+        await updateBlockContent(result, sectionBlock, qTitle, `Set title for query`);
       }
     } else {
-      await insertChildBlock(
+      await updateBlockContent(
         result,
-        sectionId,
+        sectionBlock,
         `${qTitle}\n${queryContent}`,
-        `INSERT titled query for ${sectionName}`,
-        true,
+        `Set titled query for ${sectionName}`,
       );
     }
   }
@@ -401,10 +399,11 @@ async function syncTemplateStructure(result: Result, rootBlockId: string, t: Reg
     const refreshedFinal = await logseq.Editor.getBlock(rootBlockId, { includeChildren: true });
     for (const sBlock of refreshedFinal?.children ?? []) {
       const sec = sectionNameFromLine(String(sBlock?.content ?? ''));
-      const v = viewBySection.get(sec);
+      const v = findViewBySectionOrTitle(sec);
       const qC = v ? await queryContentForView(v) : null;
       if (qC && qC.startsWith('{')) {
         await configureDbAdvancedQueryBlock(result, sBlock, qC);
+        await updateBlockContent(result, sBlock, queryTitleForView(v), `Set title for query`);
       }
     }
   }
@@ -521,7 +520,7 @@ export async function installNativeTemplates(result: Result): Promise<void> {
     'LSS Native Template Index',
     'DB templates are blocks tagged #Template on this page.',
     'Templates are materialized onto entity pages by LSS repair/create commands, not auto-applied to journal tag blocks.',
-    'Re-run lss: 8setup-templates to add missing structure/query children on existing templates.',
+    'Re-run lss: 8setup-templates to add missing structure/query blocks on existing templates.',
     `template-count:: ${(registry.templates ?? []).length}`,
   ].join('\n'));
 

@@ -13,6 +13,7 @@ const templatesSource = fs.readFileSync('src/modules/templates.ts', 'utf8');
 const repairDashboardSource = fs.readFileSync('src/modules/repair-dashboard.ts', 'utf8');
 const queriesSource = fs.readFileSync('src/modules/queries.ts', 'utf8');
 const advancedQueryBlocksSource = fs.readFileSync('src/modules/advanced-query-blocks.ts', 'utf8');
+const publicHostQuerySetupSource = fs.readFileSync('public/lss-host-query-setup.js', 'utf8');
 const queryBuildersSource = fs.readFileSync('src/modules/query-builders.ts', 'utf8');
 const queryEdnSource = fs.readFileSync('src/modules/query-edn.ts', 'utf8');
 const queryProbesSource = fs.readFileSync('src/modules/query-probes.ts', 'utf8');
@@ -235,11 +236,13 @@ if (!registryIndexSource.includes('canCreateNativeDbTag') || !registryIndexSourc
 if (
   !dbPropertiesSource.includes('shouldRefreshExistingPropertySchema') ||
   !dbPropertiesSource.includes("type === 'node'") ||
-  !setupSource.includes('nativeNodePropertiesToReset') ||
+  !setupSource.includes('staleNativeNodeProperties') ||
+  setupSource.includes('await resetNativeNodeProperty(r, propertyName)') ||
+  !setupSource.includes('setup left it unchanged') ||
   !setupSource.includes('resetNativeNodeProperty') ||
   !setupSource.includes('resetVentureNativeProperty')
 ) {
-  fail('setup must repair stale native node property schemas so Function pages get usable node pickers');
+  fail('setup must detect stale native node property schemas but leave destructive resets to explicit commands');
 }
 if (
   !dbPropertiesSource.includes('resolveJournalDatePropertyValue') ||
@@ -282,11 +285,12 @@ if (
 }
 if (
   !templatesSource.includes('placeholderNodePropertyValue') ||
-  !templatesSource.includes('LSS Placeholder/${target || prop}') ||
+  !templatesSource.includes('pageForCanonical(`LSS Placeholder/${target || prop}`)') ||
+  !templatesSource.includes('pageForCanonical(area)') ||
   !repairSource.includes('ensurePlaceholderPagesForNodeValue') ||
   !repairSource.includes('Template Placeholder')
 ) {
-  fail('repair must materialize unresolved node properties with controlled placeholder page refs');
+  fail('repair must materialize unresolved node properties with canonical controlled placeholder page refs');
 }
 if (
   !advancedQueryBlocksSource.includes('upsertBlockPropertyViaHost') ||
@@ -305,11 +309,28 @@ if (
   fail('dashboard queries must exclude controlled placeholder pages from class-tag results');
 }
 if (
+  !queryBuildersSource.includes('queryTitleForView') ||
+  !queryBuildersSource.includes(':title ${ednString(queryTitleForView(view))} :query') ||
+  !templatesSource.includes('queryTitleForView(view)') ||
+  !repairDashboardSource.includes('queryTitleForView(view)')
+) {
+  fail('dashboard/template advanced query EDN must carry titles from the shared query title helper');
+}
+if (
+  !advancedQueryBlocksSource.includes('rawQueryParentContent(parent)') ||
+  !publicHostQuerySetupSource.includes('rawQueryParentContent(parent)') ||
+  /\n\s*await updateBlockTitle\(parentRef, ''\);/.test(advancedQueryBlocksSource) ||
+  /\n\s*await updateBlockTitle\(parentRef, ''\);/.test(publicHostQuerySetupSource)
+) {
+  fail('DB advanced query adapter must not unconditionally clear visible query parent titles');
+}
+if (
   !repairSource.includes('ensureMaterialiseNativeProperties') ||
   !repairNativePropertiesSource.includes('nativeEnsureCache') ||
-  !repairNativePropertiesSource.includes('resetNativeNodeProperty')
+  repairNativePropertiesSource.includes('resetNativeNodeProperty') ||
+  !repairNativePropertiesSource.includes('Materialise left native')
 ) {
-  fail('materialise must cache native property setup checks and keep stale-schema reset support');
+  fail('materialise must cache native property setup checks without destructive stale-schema resets');
 }
 if (
   !repairDashboardSource.includes('isPlaceholderPageRef') ||

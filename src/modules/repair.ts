@@ -1261,7 +1261,7 @@ async function normalizeDatePropertyLineInContent(
 }
 
 async function ensurePlaceholderPagesForNodeValue(result: Result, value: string): Promise<void> {
-  const re = /\[\[(LSS Placeholder\/[^\]]+)\]\]/g;
+  const re = /\[\[(LSS Placeholder(?:\/| - )[^\]]+)\]\]/g;
   let match: RegExpExecArray | null;
   while ((match = re.exec(String(value ?? '')))) {
     if (!match[1]) continue;

@@ -191,7 +191,7 @@ export async function step10db(r: Result): Promise<void> {
     ...(registry.propertyRegistry ?? []),
     { name: 'lss-object-type', type: 'default', cardinality: 'one' },
   ];
-  const nativeNodePropertiesToReset = new Set<string>();
+  const staleNativeNodeProperties = new Set<string>();
   for (const p of nativeProperties) {
     const name = p.name ?? (p as { property?: string }).property ?? (p as { key?: string }).key;
     if (!name) continue;
@@ -206,7 +206,7 @@ export async function step10db(r: Result): Promise<void> {
           isNodeProperty &&
           /schema left unchanged|can't be changed|existing data|cannot be changed/i.test(ensured.note ?? '')
         ) {
-          nativeNodePropertiesToReset.add(canonicalPropertyKey(name));
+          staleNativeNodeProperties.add(canonicalPropertyKey(name));
         }
       } else if (!ensured) {
         r.errors.push(`native-property ${name}: could not register property`);
@@ -220,16 +220,17 @@ export async function step10db(r: Result): Promise<void> {
       ) {
         r.notes.push(`SKIP native property ${name}: ${message}`);
         if (isNodeProperty && !isPluginPropertyOwnershipError(message)) {
-          nativeNodePropertiesToReset.add(canonicalPropertyKey(name));
+          staleNativeNodeProperties.add(canonicalPropertyKey(name));
         }
       } else {
         r.errors.push(`native-property ${name}: ${message}`);
       }
     }
   }
-  for (const propertyName of nativeNodePropertiesToReset) {
-    r.notes.push(`Detected stale native ${propertyName} property schema; resetting it to a DB node picker.`);
-    await resetNativeNodeProperty(r, propertyName);
+  for (const propertyName of staleNativeNodeProperties) {
+    r.notes.push(
+      `Detected stale native ${propertyName} property schema; setup left it unchanged. Run an explicit reset/repair command only after confirming non-LSS values are backed up.`,
+    );
   }
   for (const o of allObjects()) {
     const tag = safeTag(o.tag);
