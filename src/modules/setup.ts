@@ -506,6 +506,36 @@ async function capturePropertyValuesForNativeProperty(property: string): Promise
   return capturePropertyValuesForLssObjects(property);
 }
 
+async function activePropertyValueCount(property: string): Promise<number | null> {
+  if (!logseq.DB?.datascriptQuery) return null;
+  const ident = safePluginPropertyIdentForQuery(property);
+  if (!ident) return null;
+  try {
+    const rows = await logseq.DB.datascriptQuery(
+      `[:find (count ?entity)
+ :where
+ [?entity ${ident} ?value]
+ (not [?entity :logseq.property/deleted-at ?deleted])
+ (not [?entity :db/ident ?entityIdent])]`,
+    );
+    const first = Array.isArray(rows) ? rows[0] : null;
+    const count = Array.isArray(first) ? Number(first[0] ?? 0) : 0;
+    return Number.isFinite(count) ? count : null;
+  } catch {
+    return null;
+  }
+}
+
+async function waitForPropertyValuesCleared(property: string): Promise<number | null> {
+  for (let i = 0; i < 20; i++) {
+    const count = await activePropertyValueCount(property);
+    if (count == null) return null;
+    if (count === 0) return 0;
+    await sleep(250);
+  }
+  return activePropertyValueCount(property);
+}
+
 async function clearCapturedPropertyValues(
   r: Result,
   property: string,
@@ -622,6 +652,14 @@ async function repairNativeNodePropertySchemaInPlace(r: Result, spec: Record<str
   r.notes.push(`Repairing native ${cleanName} schema in place; captured ${captured.length} value(s).`);
   if (!(await clearCapturedPropertyValues(r, cleanName, captured))) {
     r.notes.push(`Native ${cleanName} schema repair aborted before schema refresh because value clearing failed.`);
+    return;
+  }
+  const remaining = await waitForPropertyValuesCleared(cleanName);
+  if (remaining != null && remaining > 0) {
+    r.errors.push(
+      `Native ${cleanName} schema repair aborted: ${remaining} active value(s) still exist after clearing; Logseq would reject the type change.`,
+    );
+    await restoreCapturedPropertyValues(r, spec, cleanName, captured);
     return;
   }
 

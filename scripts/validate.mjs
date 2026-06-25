@@ -266,6 +266,8 @@ if (
   !setupSource.includes('capturePropertyValuesForNativeProperty') ||
   !setupSource.includes('repairNativeNodePropertySchemaInPlace') ||
   !setupSource.includes('repairStaleNativeNodePropertySchemas') ||
+  !setupSource.includes('waitForPropertyValuesCleared') ||
+  !setupSource.includes('Logseq would reject the type change') ||
   !setupSource.includes('(not [?entity :db/ident ?entityIdent])') ||
   !setupSource.includes('schema repair changed property order') ||
   !setupSource.includes("name.startsWith('related-') || name === 'related-to'") ||
