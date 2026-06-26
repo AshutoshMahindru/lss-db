@@ -21,16 +21,17 @@ import {
 import { formatError, sleep } from '../core/runner';
 import {
   allObjects,
-  dashboardPageForObjectType,
   normalizeAreaRef,
   objectByName,
   pageForCanonical,
   propertySpec,
   registry,
+  templateDefByObjectType,
 } from '../registry';
 import { safePageName, safeTag, todayRef, tsKey, visiblePageLabel } from '../core/names';
 import type { Result } from '../core/types';
 import type { RegistryObject } from '../registry/types';
+import { viewDefinitionsSafe } from './queries';
 
 function uniqueProps(o: RegistryObject): string[] {
   const seen = new Set<string>();
@@ -152,11 +153,10 @@ async function readCurrentContextProps(pageName: string, pageBlockId: string | n
 }
 
 function dashboardContextProps(objectType: string): Set<string> {
-  const dashboard = dashboardPageForObjectType(objectType);
   const props = new Set<string>();
-  if (!dashboard) return props;
-  for (const view of registry.viewDefinitions ?? []) {
-    if (view.dashboard !== dashboard) continue;
+  const template = templateDefByObjectType(objectType);
+  const views = template ? viewDefinitionsSafe(template) : [];
+  for (const view of views) {
     for (const filter of view.filters ?? []) {
       if (filter.property) props.add(String(filter.property));
       for (const prop of filter.propertyAny ?? []) props.add(String(prop));

@@ -20,6 +20,8 @@ import {
   repairDbQueryBlockUiKeywords,
   resolveQueryClassTagId,
   sectionNameFromLine,
+  sourceTagsForView,
+  sourceTagsFromQueryContent,
   viewDefinitionsSafe,
 } from './queries';
 import { forceCreateQueryChild } from './advanced-query-blocks';
@@ -84,6 +86,32 @@ function titleMatchesView(block: any, queryTitle: string, section: string): bool
   return Boolean(actual) && [queryTitle, section].some((label) => actual === normalizedQueryTitle(label));
 }
 
+function titleMatchesAnyView(block: any, views: ReturnType<typeof viewDefinitionsSafe>): boolean {
+  return views.some((view) =>
+    titleMatchesView(block, queryTitleForView(view), String(view.section ?? '').trim()),
+  );
+}
+
+function currentViewSourceTagSet(views: ReturnType<typeof viewDefinitionsSafe>): Set<string> {
+  const tags = new Set<string>();
+  for (const view of views) for (const tag of sourceTagsForView(view)) tags.add(tag);
+  return tags;
+}
+
+function hasKnownCurrentSourceTag(content: string, currentSources: Set<string>): boolean {
+  return sourceTagsFromQueryContent(content).some((tag) => currentSources.has(tag));
+}
+
+async function queryBlockUsesCurrentSource(block: any, currentSources: Set<string>): Promise<boolean> {
+  const content = await readDashboardQueryBlockContent(block);
+  return hasKnownCurrentSourceTag(content, currentSources);
+}
+
+async function managedQueryTitleCandidate(block: any): Promise<boolean> {
+  if (await isQueryLikeBlockAsync(block)) return true;
+  return canRemoveSectionWrapper(block);
+}
+
 function dedupeBlocks(blocks: any[]): any[] {
   const seen = new Set<string>();
   const out: any[] = [];
@@ -114,6 +142,49 @@ async function rootQueryCandidates(
     if (!queryBlockNeedsRepair(content, queryContent)) out.push(block);
   }
   return dedupeBlocks(out);
+}
+
+async function removeDuplicateDashboardQueryBlocksByTitle(
+  result: Result,
+  blocks: any[],
+  objectType: string,
+  views: ReturnType<typeof viewDefinitionsSafe>,
+  pageName: string,
+  pageEntity: any,
+): Promise<number> {
+  if (!logseq.Editor.removeBlock) return 0;
+  const viewByTitle = new Map<string, (typeof views)[number]>();
+  for (const view of views) {
+    const title = normalizedQueryTitle(queryTitleForView(view));
+    if (title && !viewByTitle.has(title)) viewByTitle.set(title, view);
+  }
+  if (!viewByTitle.size) return 0;
+
+  const groups = new Map<string, any[]>();
+  for (const block of walkBlocks(blocks)) {
+    const title = normalizedQueryTitle(blockTitle(block));
+    if (!title || !viewByTitle.has(title)) continue;
+    if (!(await managedQueryTitleCandidate(block))) continue;
+    const items = groups.get(title) ?? [];
+    items.push(block);
+    groups.set(title, items);
+  }
+
+  let removed = 0;
+  for (const [title, matches] of groups) {
+    const unique = dedupeBlocks(matches);
+    if (unique.length <= 1) continue;
+    const view = viewByTitle.get(title);
+    if (!view) continue;
+    const queryContent = await dashboardQueryBlockForViewAsync(view, pageName, pageEntity);
+    const canonical = (await pickCanonicalQueryBlock(unique, queryContent)) ?? unique[0];
+    const canonicalId = blockId(canonical);
+    for (const duplicate of unique) {
+      if (blockId(duplicate) === canonicalId) continue;
+      if (await removeDashboardQueryBlock(result, duplicate, `${objectType} duplicate ${queryTitleForView(view)}`)) removed++;
+    }
+  }
+  return removed;
 }
 
 function isEmptyPlaceholder(block: any): boolean {
@@ -247,6 +318,41 @@ async function insertRootQueryBlock(
   }
 }
 
+async function removeStaleDashboardQueryBlocks(
+  result: Result,
+  rootBlocks: any[],
+  objectType: string,
+  views: ReturnType<typeof viewDefinitionsSafe>,
+): Promise<number> {
+  if (!logseq.Editor.removeBlock) return 0;
+  const currentSources = currentViewSourceTagSet(views);
+  if (!currentSources.size) return 0;
+
+  let removed = 0;
+  for (const block of rootBlocks ?? []) {
+    if (await isQueryLikeBlockAsync(block)) {
+      if (titleMatchesAnyView(block, views)) continue;
+      if (!(await queryBlockUsesCurrentSource(block, currentSources))) continue;
+      if (await removeDashboardQueryBlock(result, block, `${objectType} stale query`)) removed++;
+      continue;
+    }
+
+    const section = sectionNameFromLine(String(block?.content ?? ''));
+    if (!section || titleMatchesAnyView(block, views)) continue;
+    let hasStaleManagedQuery = false;
+    for (const child of block?.children ?? []) {
+      if (!(await isQueryLikeBlockAsync(child))) continue;
+      if (await queryBlockUsesCurrentSource(child, currentSources)) {
+        hasStaleManagedQuery = true;
+        break;
+      }
+    }
+    if (!hasStaleManagedQuery) continue;
+    if (await removeLegacySectionWrapper(result, block, `${objectType} stale ${section}`)) removed++;
+  }
+  return removed;
+}
+
 export async function repairDashboardQueries(
   result: Result,
   pageName: string,
@@ -271,12 +377,20 @@ export async function repairDashboardQueries(
     freshBlocks = await getBlocks(safePageName(pageName));
   }
   if (!freshBlocks?.length) freshBlocks = blocks;
-  const sectionBlocks = findSectionBlocks(freshBlocks);
   let changed = 0;
   let checked = 0;
 
   const pageEntity = await getPage(pageName);
   const pageRootId = blockId(pageEntity);
+  changed += await removeDuplicateDashboardQueryBlocksByTitle(result, freshBlocks, objectType, views, pageName, pageEntity);
+  if (changed) {
+    freshBlocks = await getBlocks(pageName);
+    if (!freshBlocks?.length && safePageName(pageName) !== pageName) {
+      freshBlocks = await getBlocks(safePageName(pageName));
+    }
+    if (!freshBlocks?.length) freshBlocks = blocks;
+  }
+  const sectionBlocks = findSectionBlocks(freshBlocks);
   const cleanedLegacySectionIds = new Set<string>();
 
   for (const view of views) {
@@ -349,6 +463,9 @@ export async function repairDashboardQueries(
     }
   }
 
+  const afterRepairBlocks = await getBlocks(pageName);
+  changed += await removeStaleDashboardQueryBlocks(result, afterRepairBlocks, objectType, views);
+
   result.notes.push(
     `Dashboard query repair: inferred ${objectType}; changed/inserted ${changed} query block(s), checked ${checked} existing query block(s).`,
   );
@@ -375,35 +492,41 @@ export async function repairLinkedParentDashboards(
     if (!refs.length) continue;
 
     const targets = ((spec as { targets?: unknown[] } | undefined)?.targets ?? []).map(String).filter(Boolean);
-    for (const targetType of targets) {
-      const dashboard = dashboardPageForObjectType(targetType);
-      const template = templateDefByObjectType(targetType);
-      if (!dashboard || !template) continue;
-      const sections = new Set<string>();
-      for (const view of viewDefinitionsSafe(template)) {
-        if (view.dashboard !== dashboard) continue;
-        if ((view.filters ?? []).some((filter) => filterProps(filter).includes(prop))) {
-          sections.add(String(view.section ?? '').trim());
+    const targetHints: Array<string | null> = targets.length ? targets : [null];
+    for (const ref of refs) {
+      const parentName = await resolveVisibleNodeToken(result, ref);
+      if (isPlaceholderPageRef(parentName)) {
+        if (!skippedPlaceholders.has(parentName)) {
+          result.notes.push(`SKIP linked parent repair for placeholder [[${parentName}]].`);
+          skippedPlaceholders.add(parentName);
         }
+        continue;
       }
-      if (!sections.size) continue;
 
-      for (const ref of refs) {
-        const parentName = await resolveVisibleNodeToken(result, ref);
-        if (isPlaceholderPageRef(parentName)) {
-          if (!skippedPlaceholders.has(parentName)) {
-            result.notes.push(`SKIP linked parent repair for placeholder [[${parentName}]].`);
-            skippedPlaceholders.add(parentName);
+      let parentBlocks: any[] | null = null;
+      for (const targetHint of targetHints) {
+        if (!parentBlocks && !targetHint) parentBlocks = await getBlocks(parentName);
+        const targetType = targetHint ?? inferObjectType(parentName, parentBlocks ?? []);
+        if (!targetType) continue;
+        const dashboard = dashboardPageForObjectType(targetType);
+        const template = templateDefByObjectType(targetType);
+        if (!template) continue;
+        const sections = new Set<string>();
+        for (const view of viewDefinitionsSafe(template)) {
+          if (dashboard && view.dashboard && view.dashboard !== dashboard) continue;
+          if ((view.filters ?? []).some((filter) => filterProps(filter).includes(prop))) {
+            sections.add(String(view.section ?? '').trim());
           }
-          continue;
         }
+        if (!sections.size) continue;
+
         const key = `${targetType}:${parentName}:${[...sections].sort().join('|')}`;
         if (repairedKeys.has(key)) continue;
         repairedKeys.add(key);
         result.notes.push(
           `Linked parent repair: ${objectType ?? 'object'} ${currentPage} points to ${targetType} [[${parentName}]] via ${prop}; refreshing ${[...sections].join(', ')}.`,
         );
-        const parentBlocks = await getBlocks(parentName);
+        parentBlocks = parentBlocks ?? await getBlocks(parentName);
         total += await repairDashboardQueries(result, parentName, parentBlocks, targetType, sections, inferObjectType);
         markRepairCooldown(parentName);
       }

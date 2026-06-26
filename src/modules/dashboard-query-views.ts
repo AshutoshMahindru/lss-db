@@ -1,16 +1,19 @@
 import { safeTag } from '../core/names';
 import {
+  areaRelationshipPropertiesForObject,
   allRelationships,
   allObjects,
   dashboardPageForObjectType,
+  normalizeAreaRef,
   objectByName,
+  propertySpec,
   registry,
   templateDefByObjectType,
   templateNameFromRegistry,
 } from '../registry';
-import type { RegistryTemplate, ViewDefinition } from '../registry/types';
+import type { RegistryObject, RegistryTemplate, ViewDefinition } from '../registry/types';
 import { sectionNameFromLine } from './dashboard-query-repair';
-import { simpleQueryForView } from './query-builders';
+import { queryTitleForView, simpleQueryForView } from './query-builders';
 
 export function queryLineForView(view: ViewDefinition, indent: string, inlineQueryTag = true): string[] {
   const query = simpleQueryForView(view);
@@ -69,6 +72,84 @@ export function viewKey(view: ViewDefinition): string {
   return `${view.section}::${tags}::${filters}`;
 }
 
+function viewSectionSourceKey(view: ViewDefinition): string {
+  const section = normalizedSectionName(String(view.section ?? ''));
+  const tags = (view.sourceTags ?? []).map(safeTag).sort((a, b) => a.localeCompare(b)).join('|');
+  return `${section}::${tags}`;
+}
+
+function viewTitleKey(view: ViewDefinition): string {
+  return normalizedSectionName(queryTitleForView(view));
+}
+
+function sameSourceTags(left: ViewDefinition, right: ViewDefinition): boolean {
+  return (
+    (left.sourceTags ?? []).map(safeTag).sort((a, b) => a.localeCompare(b)).join('|') ===
+    (right.sourceTags ?? []).map(safeTag).sort((a, b) => a.localeCompare(b)).join('|')
+  );
+}
+
+export function sourceTagsForView(view: ViewDefinition): string[] {
+  return (view.sourceTags ?? []).map((tag) => safeTag(String(tag))).filter(Boolean);
+}
+
+export function sourceTagsFromQueryContent(content: string): string[] {
+  const tags = [...String(content ?? '').matchAll(/\(tags\s+#?([^\s)]+)\)/gi)]
+    .map((match) => safeTag(String(match[1] ?? '').replace(/^"|"$/g, '')))
+    .filter(Boolean);
+  return [...new Set(tags)];
+}
+
+function includesCurrentPageFilterProps(view: ViewDefinition): string[] {
+  const props: string[] = [];
+  for (const filter of view.filters ?? []) {
+    if (String(filter.operator ?? '') !== 'includesCurrentPage') continue;
+    if (filter.property) props.push(String(filter.property));
+    for (const prop of filter.propertyAny ?? []) props.push(String(prop));
+  }
+  return props;
+}
+
+function mergeViewFilters(existing: ViewDefinition, incoming: ViewDefinition): ViewDefinition {
+  const mergedProps = [...new Set([...includesCurrentPageFilterProps(existing), ...includesCurrentPageFilterProps(incoming)])];
+  if (!mergedProps.length) return existing;
+  const otherFilters = (existing.filters ?? []).filter((filter) => String(filter.operator ?? '') !== 'includesCurrentPage');
+  return {
+    ...existing,
+    filters: [
+      ...otherFilters,
+      mergedProps.length === 1
+        ? { property: mergedProps[0], operator: 'includesCurrentPage' }
+        : { propertyAny: mergedProps, operator: 'includesCurrentPage' },
+    ],
+  };
+}
+
+function splitSourceTagView(view: ViewDefinition): ViewDefinition[] {
+  const tags = (view.sourceTags ?? []).map(String).filter(Boolean);
+  if (tags.length <= 1) return [view];
+  return tags.map((tag) => ({
+    ...view,
+    sourceTags: [tag],
+  }));
+}
+
+function pushViews(out: ViewDefinition[], views: ViewDefinition[]): void {
+  for (const view of views) out.push(...splitSourceTagView(view));
+}
+
+function registryDashboardViews(template: RegistryTemplate): ViewDefinition[] {
+  const objectType = templateNameFromRegistry(template);
+  const dashboard = dashboardPageForObjectType(objectType);
+  const views: ViewDefinition[] = [];
+  if (!dashboard) return views;
+  for (const view of registry.viewDefinitions ?? []) {
+    if (view.dashboard !== dashboard) continue;
+    views.push({ ...view, section: templateSectionAliases(template, view.section ?? '') });
+  }
+  return views;
+}
+
 export function makeView(
   objectType: string,
   section: string,
@@ -90,6 +171,97 @@ export function makeView(
     nativeQueryStatus: 'template-query-block',
     exportPolicy: 'inherit',
   };
+}
+
+function objectTag(object: RegistryObject): string {
+  return safeTag(object.tag || object.name);
+}
+
+function objectPropertyNames(object: RegistryObject): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const add = (name: string) => {
+    const clean = String(name ?? '').trim();
+    if (!clean || seen.has(clean)) return;
+    seen.add(clean);
+    out.push(clean);
+  };
+  for (const name of object.requiredProperties ?? []) add(name);
+  for (const name of object.properties ?? []) add(name);
+  for (const name of areaRelationshipPropertiesForObject(object)) add(name);
+  return out;
+}
+
+function propertyTargetsObject(property: string, object: RegistryObject): boolean {
+  const spec = propertySpec(property) as Record<string, unknown> | undefined;
+  if (String(spec?.type ?? '').toLowerCase() !== 'node') return false;
+  const targets = ((spec?.targets as unknown[] | undefined) ?? [])
+    .map((target) => safeTag(String(target)))
+    .filter(Boolean);
+  return targets.includes(objectTag(object));
+}
+
+function relatedFilterPropertiesForSourceObject(
+  current: RegistryObject,
+  source: RegistryObject,
+  includeRelatedToFallback: boolean,
+): string[] {
+  const direct: string[] = [];
+  let hasRelatedTo = false;
+  for (const property of objectPropertyNames(source)) {
+    if (property === 'related-to') {
+      hasRelatedTo = true;
+      continue;
+    }
+    if (propertyTargetsObject(property, current)) direct.push(property);
+  }
+  if (includeRelatedToFallback || hasRelatedTo) direct.push('related-to');
+  return [...new Set(direct)];
+}
+
+function objectCanSelfRelate(object: RegistryObject): boolean {
+  return objectPropertyNames(object).some((property) => property === 'related-to' || propertyTargetsObject(property, object));
+}
+
+function isRegistryEntity(object: RegistryObject | undefined): object is RegistryObject {
+  if (!object) return false;
+  return (registry.entityTypes ?? []).some((candidate) => safeTag(candidate.tag) === safeTag(object.tag));
+}
+
+function genericEntityObjects(): RegistryObject[] {
+  return (registry.entityTypes ?? []).filter(
+    (object) => normalizeAreaRef(object.area) === 'Area/Cross-Cutting',
+  );
+}
+
+function contextualEntityTemplateViews(template: RegistryTemplate): ViewDefinition[] {
+  const current = objectByName(templateNameFromRegistry(template));
+  if (!isRegistryEntity(current)) return [];
+
+  const views: ViewDefinition[] = [];
+  const seenSources = new Set<string>();
+  const addSource = (source: RegistryObject, relationRole: 'parent-child-sibling' | 'generic' | 'form') => {
+    if (safeTag(source.tag) === safeTag(current.tag) && !objectCanSelfRelate(source)) return;
+    const sourceKey = safeTag(source.tag || source.name);
+    if (!sourceKey || seenSources.has(sourceKey)) return;
+    seenSources.add(sourceKey);
+    const section = String(source.dashboardSection ?? source.name ?? sourceKey).trim();
+    const filters = relatedFilterPropertiesForSourceObject(current, source, true);
+    if (!section || !filters.length) return;
+    views.push({
+      ...makeView(current.name, section, source.name || sourceKey, filters),
+      queryIntent: `${relationRole} ${source.name || sourceKey} pages related to current ${current.name}`,
+    });
+  };
+
+  const area = normalizeAreaRef(current.area);
+  for (const source of registry.entityTypes ?? []) {
+    if (normalizeAreaRef(source.area) !== area) continue;
+    addSource(source, 'parent-child-sibling');
+  }
+  for (const source of genericEntityObjects()) addSource(source, 'generic');
+  for (const source of registry.formTypes ?? []) addSource(source, 'form');
+  return views;
 }
 
 export function supplementalTemplateViews(template: RegistryTemplate): ViewDefinition[] {
@@ -144,39 +316,38 @@ export function autoRelationshipTemplateViews(template: RegistryTemplate): ViewD
 }
 
 export function viewDefinitionsSafe(template: RegistryTemplate): ViewDefinition[] {
-  const objectType = templateNameFromRegistry(template);
-  const dashboard = dashboardPageForObjectType(objectType);
-  const bodySections = templateBodySectionSet(template);
   const views: ViewDefinition[] = [];
 
-  const allowed = (section: string) => {
-    const name = String(section ?? '').trim();
-    return name && (!bodySections.size || bodySections.has(name));
-  };
-
-  if (dashboard) {
-    for (const view of registry.viewDefinitions ?? []) {
-      if (view.dashboard !== dashboard) continue;
-      const mapped = { ...view, section: templateSectionAliases(template, view.section ?? '') };
-      if (allowed(mapped.section ?? '')) views.push(mapped);
-    }
-  }
-
-  views.push(...autoRelationshipTemplateViews(template));
+  pushViews(views, contextualEntityTemplateViews(template));
+  pushViews(views, registryDashboardViews(template));
+  pushViews(views, autoRelationshipTemplateViews(template));
   for (const extra of supplementalTemplateViews(template)) {
     const section = String(extra.section ?? '').trim();
-    if (allowed(section)) views.push({ ...extra, section });
+    if (section) pushViews(views, [{ ...extra, section }]);
   }
 
   const deduped: ViewDefinition[] = [];
   const seenKeys = new Set<string>();
+  const seenSectionSources = new Map<string, number>();
+  const seenTitles = new Map<string, number>();
   for (const view of views) {
     const section = String(view.section ?? '').trim();
     if (!section) continue;
     const normalized = { ...view, section };
     const key = viewKey(normalized);
+    const sectionSourceKey = viewSectionSourceKey(normalized);
+    const titleKey = viewTitleKey(normalized);
+    const semanticDuplicateIndex = deduped.findIndex((existing) => sameSourceTags(existing, normalized));
+    const duplicateIndex = seenTitles.get(titleKey) ?? seenSectionSources.get(sectionSourceKey) ?? semanticDuplicateIndex;
+    if (duplicateIndex >= 0) {
+      deduped[duplicateIndex] = mergeViewFilters(deduped[duplicateIndex], normalized);
+      seenKeys.add(key);
+      continue;
+    }
     if (seenKeys.has(key)) continue;
     seenKeys.add(key);
+    seenSectionSources.set(sectionSourceKey, deduped.length);
+    seenTitles.set(titleKey, deduped.length);
     deduped.push(normalized);
   }
   return deduped;

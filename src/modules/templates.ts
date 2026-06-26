@@ -22,12 +22,16 @@ import {
   advancedQueryBlockContent,
   configureDbAdvancedQueryBlock,
   isAdvancedQueryBlockContent,
+  isQueryLikeBlockAsync,
   isQueryLikeContent,
   queryBlockContent,
   queryTitleForView,
+  readDashboardQueryBlockContent,
   sectionNameFromLine,
   simpleQueryForView,
   simpleQueryForViewAsync,
+  sourceTagsForView,
+  sourceTagsFromQueryContent,
   viewDefinitionsSafe,
 } from './queries';
 
@@ -204,6 +208,22 @@ async function queryContentForView(view: import('../registry/types').ViewDefinit
   return queryBlockContent(body);
 }
 
+function queryBlockLabelKey(value: string): string {
+  return String(value ?? '')
+    .split(/\r?\n/)[0]
+    .replace(/^#+\s*/, '')
+    .trim()
+    .toLowerCase()
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ');
+}
+
+function batchChildMatchesView(child: BatchBlock, view: import('../registry/types').ViewDefinition): boolean {
+  const section = sectionNameFromLine(child.content);
+  const label = queryBlockLabelKey(section || child.content);
+  return [view.section, queryTitleForView(view)].some((candidate) => queryBlockLabelKey(String(candidate ?? '')) === label);
+}
+
 async function injectQueriesIntoBatch(batch: BatchBlock, t: RegistryTemplate): Promise<BatchBlock> {
   const views = viewDefinitionsSafe(t);
   const viewBySection = new Map<string, (typeof views)[number]>();
@@ -235,6 +255,18 @@ async function injectQueriesIntoBatch(batch: BatchBlock, t: RegistryTemplate): P
   };
 
   await visit(batch);
+
+  if (!batch.children) batch.children = [];
+  for (const view of views) {
+    if (batch.children.some((child) => batchChildMatchesView(child, view))) continue;
+    const queryContent = await queryContentForView(view);
+    if (!queryContent) continue;
+    const qTitle = queryTitleForView(view);
+    const isDb = await isDbGraph();
+    batch.children.push({
+      content: isDb && queryContent.startsWith('{') ? qTitle : `${qTitle}\n#Query ${simpleQueryForView(view)}`,
+    });
+  }
   return batch;
 }
 
@@ -336,6 +368,131 @@ async function insertChildBlock(
   }
 }
 
+function templateChildMatchesView(child: any, view: import('../registry/types').ViewDefinition): boolean {
+  const section = sectionNameFromLine(String(child?.content ?? ''));
+  const label = queryBlockLabelKey(section || String(child?.content ?? ''));
+  return [view.section, queryTitleForView(view)].some((candidate) => queryBlockLabelKey(String(candidate ?? '')) === label);
+}
+
+function templateChildMatchesAnyView(child: any, views: import('../registry/types').ViewDefinition[]): boolean {
+  return views.some((view) => templateChildMatchesView(child, view));
+}
+
+function currentTemplateSourceTags(views: import('../registry/types').ViewDefinition[]): Set<string> {
+  const tags = new Set<string>();
+  for (const view of views) for (const tag of sourceTagsForView(view)) tags.add(tag);
+  return tags;
+}
+
+function queryContentUsesCurrentTemplateSource(content: string, currentSources: Set<string>): boolean {
+  return sourceTagsFromQueryContent(content).some((tag) => currentSources.has(tag));
+}
+
+async function templateQueryUsesCurrentSource(block: any, currentSources: Set<string>): Promise<boolean> {
+  const content = await readDashboardQueryBlockContent(block);
+  return queryContentUsesCurrentTemplateSource(content, currentSources);
+}
+
+function isEmptyTemplatePlaceholder(block: any): boolean {
+  const text = String(block?.content ?? block?.title ?? '').trim();
+  if (text && text !== '-' && !/^Query intent:/i.test(text)) return false;
+  return (block?.children ?? []).every((child: any) => isEmptyTemplatePlaceholder(child));
+}
+
+async function templateSectionHasOnlyQueryOrEmptyChildren(block: any): Promise<boolean> {
+  for (const child of block?.children ?? []) {
+    if (await isQueryLikeBlockAsync(child)) continue;
+    if (isEmptyTemplatePlaceholder(child)) continue;
+    return false;
+  }
+  return true;
+}
+
+async function removeTemplateBlock(result: Result, block: any, label: string): Promise<boolean> {
+  const id = blockId(block);
+  if (!id || !logseq.Editor.removeBlock) return false;
+  await logseq.Editor.removeBlock(id).catch(() => null);
+  result.actions.push(label);
+  await sleep(30);
+  return true;
+}
+
+async function ensureTemplateQueryBlock(
+  result: Result,
+  rootBlockId: string,
+  displayName: string,
+  view: import('../registry/types').ViewDefinition,
+): Promise<void> {
+  const queryContent = await queryContentForView(view);
+  if (!queryContent) return;
+  const qTitle = queryTitleForView(view);
+  const isDb = await isDbGraph();
+  const content = isDb && queryContent.startsWith('{') ? qTitle : `${qTitle}\n#Query ${simpleQueryForView(view)}`;
+  const insertedId = await insertChildBlock(
+    result,
+    rootBlockId,
+    content,
+    `INSERT template query block: ${displayName} / ${qTitle}`,
+  );
+  if (!insertedId || !isDb || !queryContent.startsWith('{')) return;
+  const inserted = await logseq.Editor.getBlock?.(insertedId, { includeChildren: true }).catch(() => null);
+  await configureDbAdvancedQueryBlock(result, inserted ?? { uuid: insertedId, content: qTitle }, queryContent);
+  await updateBlockContent(result, inserted ?? { uuid: insertedId, content: qTitle }, qTitle, `Set title for query`);
+}
+
+async function dedupeTemplateQueryBlocks(
+  result: Result,
+  rootBlockId: string,
+  displayName: string,
+  views: import('../registry/types').ViewDefinition[],
+): Promise<any> {
+  let current = await logseq.Editor.getBlock(rootBlockId, { includeChildren: true });
+  if (!logseq.Editor.removeBlock) return current;
+
+  for (const view of views) {
+    const matches = (current?.children ?? []).filter((child: any) => templateChildMatchesView(child, view));
+    if (matches.length <= 1) continue;
+    for (const duplicate of matches.slice(1)) {
+      await removeTemplateBlock(
+        result,
+        duplicate,
+        `REMOVE duplicate template query block: ${displayName} / ${queryTitleForView(view)}`,
+      );
+    }
+    current = await logseq.Editor.getBlock(rootBlockId, { includeChildren: true });
+  }
+
+  const currentSources = currentTemplateSourceTags(views);
+  if (!currentSources.size) return current;
+  for (const child of current?.children ?? []) {
+    if (templateChildMatchesAnyView(child, views)) continue;
+    if (await isQueryLikeBlockAsync(child)) {
+      if (await templateQueryUsesCurrentSource(child, currentSources)) {
+        await removeTemplateBlock(result, child, `REMOVE stale template query block: ${displayName}`);
+      }
+      continue;
+    }
+
+    const staleQueryChildren = [];
+    for (const grandchild of child?.children ?? []) {
+      if (!(await isQueryLikeBlockAsync(grandchild))) continue;
+      if (await templateQueryUsesCurrentSource(grandchild, currentSources)) {
+        staleQueryChildren.push(grandchild);
+      }
+    }
+    if (!staleQueryChildren.length) continue;
+    if (await templateSectionHasOnlyQueryOrEmptyChildren(child)) {
+      await removeTemplateBlock(result, child, `REMOVE stale template query section: ${displayName}`);
+    } else {
+      for (const grandchild of staleQueryChildren) {
+        await removeTemplateBlock(result, grandchild, `REMOVE stale nested template query block: ${displayName}`);
+      }
+    }
+  }
+  current = await logseq.Editor.getBlock(rootBlockId, { includeChildren: true });
+  return current;
+}
+
 async function syncTemplateStructure(result: Result, rootBlockId: string, t: RegistryTemplate): Promise<void> {
   const displayName = templateNameFromRegistry(t);
   if (!logseq.Editor.getBlock) return;
@@ -408,6 +565,12 @@ async function syncTemplateStructure(result: Result, rootBlockId: string, t: Reg
         `Set titled query for ${sectionName}`,
       );
     }
+  }
+
+  const afterExisting = await dedupeTemplateQueryBlocks(result, rootBlockId, displayName, views);
+  for (const view of views) {
+    if ((afterExisting?.children ?? []).some((child: any) => templateChildMatchesView(child, view))) continue;
+    await ensureTemplateQueryBlock(result, rootBlockId, displayName, view);
   }
 
   // Final pass: ensure all advanced queries in the template have full structure (tags, display-type :code, proper EDN with corrections).

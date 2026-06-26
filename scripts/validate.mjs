@@ -814,23 +814,58 @@ for (const [label, source, required] of [
   [
     'dashboard query views module',
     dashboardQueryViewsSource,
-    ['viewDefinitionsSafe', 'autoRelationshipTemplateViews', 'relationshipPropertyNames'],
+    [
+      'viewDefinitionsSafe',
+      'autoRelationshipTemplateViews',
+      'relationshipPropertyNames',
+      'contextualEntityTemplateViews',
+      'genericEntityObjects',
+      'registry.formTypes',
+      'areaRelationshipPropertiesForObject',
+      'relatedFilterPropertiesForSourceObject',
+      'objectCanSelfRelate',
+      'viewSectionSourceKey',
+      'viewTitleKey',
+      'mergeViewFilters',
+      'includesCurrentPageFilterProps',
+      "'parent-child-sibling'",
+      'pushViews(views, contextualEntityTemplateViews(template))',
+    ],
   ],
 ]) {
   for (const text of required) {
     if (!source.includes(text)) fail(`${label} missing split responsibility: ${text}`);
   }
 }
+for (const required of [
+  'ensureTemplateQueryBlock',
+  'dedupeTemplateQueryBlocks',
+  'REMOVE duplicate template query block',
+  'INSERT template query block',
+  'batchChildMatchesView',
+]) {
+  if (!templatesSource.includes(required)) fail(`native templates must append generated query blocks: ${required}`);
+}
 for (const [label, source, required] of [
   [
     'create context inheritance',
     createSource,
-    ['defaultCreateOverrides', 'dashboardContextProps', 'insertFormByName', '`related-${compact}`', 'Set ${prop} from current context'],
+    ['defaultCreateOverrides', 'dashboardContextProps', 'viewDefinitionsSafe(template)', 'insertFormByName', '`related-${compact}`', 'Set ${prop} from current context'],
   ],
   [
     'generic linked parent repair',
     repairSource + repairDashboardSource,
-    ['dashboardPageForObjectType', 'filterProps(filter).includes(prop)', 'select or link the ${targetHint} page', 'Linked parent repair:'],
+    [
+      'dashboardPageForObjectType',
+      'filterProps(filter).includes(prop)',
+      'select or link the ${targetHint} page',
+      'Linked parent repair:',
+      'removeDuplicateDashboardQueryBlocksByTitle',
+      'managedQueryTitleCandidate',
+      'normalizedQueryTitle(queryTitleForView(view))',
+      'const targetHints: Array<string | null> = targets.length ? targets : [null]',
+      'targetHint ?? inferObjectType',
+    ],
   ],
   [
     'dashboard current-page text fallback',
