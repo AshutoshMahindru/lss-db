@@ -15,6 +15,7 @@ import {
   ensurePage,
   getPage,
   pageVisibleName,
+  resolvePageFromIdentity,
 } from '../core/editor';
 import { formatError, sleep } from '../core/runner';
 import { safeTag } from '../core/names';
@@ -244,6 +245,7 @@ export async function step10db(r: Result): Promise<void> {
       `Detected stale native ${propertyName} property schema; setup left it unchanged. Run an explicit reset/repair command only after confirming non-LSS values are backed up.`,
     );
   }
+  await ensurePrimaryDisplayPropertyOrder(r);
   await ensureRelatedToPropertyOrder(r);
   await ensureRelatedToBeforeTrailingAdminProperties(r);
   for (const o of allObjects()) {
@@ -594,6 +596,7 @@ async function restoreCapturedPropertyValues(
   captured: Array<{ blockId: string; value: unknown }>,
 ): Promise<void> {
   const isNode = String(spec.type ?? '').toLowerCase() === 'node';
+  const isDate = String(spec.type ?? '').toLowerCase() === 'date';
   let restored = 0;
   let restoreFailed = 0;
   if (logseq.Editor.upsertBlockProperty) {
@@ -601,6 +604,11 @@ async function restoreCapturedPropertyValues(
       const raw = await propertyValueToRestoreStringAsync(item.value);
       if (!raw) continue;
       let upsertValue = await resolveUpsertPropertyValue(cleanName, raw);
+      if (isDate && upsertValue == null && /^\d+$/.test(raw)) {
+        const page = await resolvePageFromIdentity(raw).catch(() => null);
+        const label = pageVisibleName(page as Record<string, unknown> | null);
+        if (label) upsertValue = await resolveUpsertPropertyValue(cleanName, label);
+      }
       if (isNode && typeof upsertValue === 'string' && /^\d+(?:\s*,\s*\d+)*$/.test(raw)) {
         const ids = raw.split(',').map((value) => Number(value.trim())).filter((value) => Number.isFinite(value));
         const cardinality = String((spec as { cardinality?: string }).cardinality ?? '').toLowerCase();
@@ -835,10 +843,67 @@ export async function resetRelatedToNativeProperty(r: Result): Promise<void> {
   await resetNativeNodeProperty(r, 'related-to');
 }
 
-const RELATED_TO_TRAILING_DISPLAY_PROPERTIES: Array<Record<string, unknown>> = [
-  { name: 'owner', type: 'node', cardinality: 'one', targets: ['Person'] },
-  { name: 'lss-object-type', type: 'default', cardinality: 'one' },
-];
+const PRIMARY_DISPLAY_PROPERTIES = new Set(['status', 'Status', 'area', 'areas', 'date']);
+
+function specForDisplayProperty(name: string): Record<string, unknown> | null {
+  if (name === 'lss-object-type') return { name: 'lss-object-type', type: 'default', cardinality: 'one' };
+  return (propertySpec(name) as Record<string, unknown> | undefined) ?? null;
+}
+
+function displayPropertyBeforeRelatedTo(name: string, spec = specForDisplayProperty(name)): boolean {
+  const clean = canonicalPropertyKey(name);
+  if (!clean || clean === 'related-to') return false;
+  if (PRIMARY_DISPLAY_PROPERTIES.has(clean) || clean === 'owner') return false;
+  if (clean.startsWith('related-')) return true;
+  return String(spec?.type ?? '').toLowerCase() === 'node';
+}
+
+function afterPrimaryDisplayPropertySpecs(): Array<Record<string, unknown>> {
+  const afterPrimary = new Set<string>();
+  for (const object of allObjects()) {
+    for (const name of uniqueObjectProps(object).map(canonicalPropertyKey)) {
+      if (!name || PRIMARY_DISPLAY_PROPERTIES.has(name)) continue;
+      afterPrimary.add(name);
+    }
+  }
+  afterPrimary.add('lss-object-type');
+  return [...afterPrimary].map(specForDisplayProperty).filter((spec): spec is Record<string, unknown> => Boolean(spec));
+}
+
+function relatedToTrailingDisplayPropertySpecs(): Array<Record<string, unknown>> {
+  const trailing = new Set<string>();
+  for (const object of allObjects()) {
+    const props = uniqueObjectProps(object).map(canonicalPropertyKey);
+    const relatedToIndex = props.indexOf('related-to');
+    if (relatedToIndex < 0) continue;
+    for (const name of props.slice(relatedToIndex + 1)) {
+      if (name && !name.startsWith('related-')) trailing.add(name);
+    }
+  }
+  trailing.add('lss-object-type');
+
+  return [...trailing].map(specForDisplayProperty).filter((spec): spec is Record<string, unknown> => Boolean(spec));
+}
+
+async function propertiesBeforePrimaryDisplayFields(): Promise<string[]> {
+  const primaryOrders = [];
+  for (const name of PRIMARY_DISPLAY_PROPERTIES) {
+    const order = await nativePropertyOrder(name);
+    if (order) primaryOrders.push(order);
+  }
+  if (!primaryOrders.length) return [];
+  primaryOrders.sort();
+  const latestPrimaryOrder = primaryOrders[primaryOrders.length - 1];
+  if (!latestPrimaryOrder) return [];
+
+  const beforePrimary = [];
+  for (const spec of afterPrimaryDisplayPropertySpecs()) {
+    const name = specPropertyName(spec);
+    const order = await nativePropertyOrder(name);
+    if (order && order < latestPrimaryOrder) beforePrimary.push(name);
+  }
+  return beforePrimary;
+}
 
 async function relatedPropertiesAfterRelatedTo(): Promise<string[]> {
   const relatedToOrder = await nativePropertyOrder('related-to');
@@ -846,7 +911,7 @@ async function relatedPropertiesAfterRelatedTo(): Promise<string[]> {
   const laterSpecific: string[] = [];
   for (const spec of allPropertySpecs()) {
     const name = specPropertyName(spec);
-    if (!name.startsWith('related-') || name === 'related-to') continue;
+    if (!displayPropertyBeforeRelatedTo(name, spec)) continue;
     const order = await nativePropertyOrder(name);
     if (order && order > relatedToOrder) laterSpecific.push(name);
   }
@@ -889,6 +954,17 @@ export async function repairRelatedToDisplayOrder(r: Result): Promise<void> {
     await resetNativePropertyDefinition(r, spec);
   }
 
+  const beforePrimary = await propertiesBeforePrimaryDisplayFields();
+  if (beforePrimary.length) {
+    r.notes.push(`Repairing canonical display order after primary field(s): ${beforePrimary.join(', ')}.`);
+    for (const spec of afterPrimaryDisplayPropertySpecs()) {
+      const name = specPropertyName(spec);
+      if (!beforePrimary.includes(name)) continue;
+      await resetNativePropertyDefinition(r, spec);
+      await sleep(150);
+    }
+  }
+
   const laterSpecific = await relatedPropertiesAfterRelatedTo();
   if (laterSpecific.length) {
     r.notes.push(`Repairing related-to order after specific related field(s): ${laterSpecific.join(', ')}.`);
@@ -896,7 +972,7 @@ export async function repairRelatedToDisplayOrder(r: Result): Promise<void> {
     await sleep(150);
   }
 
-  for (const spec of RELATED_TO_TRAILING_DISPLAY_PROPERTIES) {
+  for (const spec of relatedToTrailingDisplayPropertySpecs()) {
     const name = specPropertyName(spec);
     const relatedToOrder = await nativePropertyOrder('related-to');
     const order = await nativePropertyOrder(name);
@@ -908,6 +984,7 @@ export async function repairRelatedToDisplayOrder(r: Result): Promise<void> {
 
   await ensureRelatedToPropertyOrder(r);
   await ensureRelatedToBeforeTrailingAdminProperties(r);
+  await ensurePrimaryDisplayPropertyOrder(r);
 }
 
 export async function resetStaleNativeNodeProperties(r: Result): Promise<void> {
@@ -928,7 +1005,7 @@ export async function ensureRelatedToPropertyOrder(r: Result): Promise<void> {
   const laterSpecific = [];
   for (const spec of allPropertySpecs()) {
     const name = specPropertyName(spec);
-    if (!name.startsWith('related-') || name === 'related-to') continue;
+    if (!displayPropertyBeforeRelatedTo(name, spec)) continue;
     const order = await nativePropertyOrder(name);
     if (order && order > relatedToOrder) laterSpecific.push(name);
   }
@@ -938,17 +1015,26 @@ export async function ensureRelatedToPropertyOrder(r: Result): Promise<void> {
   );
 }
 
+export async function ensurePrimaryDisplayPropertyOrder(r: Result): Promise<void> {
+  const beforePrimary = await propertiesBeforePrimaryDisplayFields();
+  if (!beforePrimary.length) return;
+  r.notes.push(
+    `primary display field order is after canonical field(s): ${beforePrimary.join(', ')}; setup left native property definitions unchanged.`,
+  );
+}
+
 export async function ensureRelatedToBeforeTrailingAdminProperties(r: Result): Promise<void> {
   const relatedToOrder = await nativePropertyOrder('related-to');
   if (!relatedToOrder) return;
   const trailingBeforeRelatedTo = [];
-  for (const name of ['owner', 'lss-object-type']) {
+  for (const spec of relatedToTrailingDisplayPropertySpecs()) {
+    const name = specPropertyName(spec);
     const order = await nativePropertyOrder(name);
     if (order && order < relatedToOrder) trailingBeforeRelatedTo.push(name);
   }
   if (!trailingBeforeRelatedTo.length) return;
   r.notes.push(
-    `related-to property order is after trailing admin field(s): ${trailingBeforeRelatedTo.join(', ')}; setup left native property definitions unchanged.`,
+    `related-to property order is after trailing canonical field(s): ${trailingBeforeRelatedTo.join(', ')}; setup left native property definitions unchanged.`,
   );
 }
 

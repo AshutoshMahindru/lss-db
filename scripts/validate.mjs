@@ -173,6 +173,50 @@ for (const object of allObjects) {
     if (!propertyByName.has(property)) fail(`${object.name} references unknown property ${property}`);
   }
 }
+const primaryBeforeRelatedToProperties = new Set(['status', 'Status', 'area', 'areas', 'date']);
+function relationshipBeforeRelatedTo(property) {
+  if (String(property).startsWith('related-')) return true;
+  if (property === 'owner' || property === 'area' || property === 'areas') return false;
+  const spec = propertyByName.get(property);
+  return String(spec?.type ?? '').toLowerCase() === 'node';
+}
+function canonicalObjectPropertyOrder(object) {
+  const seen = new Set();
+  const primary = [];
+  const related = [];
+  const trailing = [];
+  let deferredRelatedTo = '';
+  const add = (property) => {
+    if (!property || seen.has(property)) return;
+    seen.add(property);
+    if (property === 'related-to') {
+      deferredRelatedTo = property;
+    } else if (primaryBeforeRelatedToProperties.has(property)) {
+      primary.push(property);
+    } else if (relationshipBeforeRelatedTo(property)) {
+      related.push(property);
+    } else {
+      trailing.push(property);
+    }
+  };
+  for (const property of object.requiredProperties ?? []) add(property);
+  for (const property of object.properties ?? []) add(property);
+  if (deferredRelatedTo) related.push(deferredRelatedTo);
+  return [...primary, ...related, ...trailing];
+}
+for (const object of allObjects) {
+  const props = canonicalObjectPropertyOrder(object);
+  const relatedToIndex = props.indexOf('related-to');
+  if (relatedToIndex < 0) continue;
+  for (const property of props.slice(0, relatedToIndex)) {
+    if (!primaryBeforeRelatedToProperties.has(property) && !relationshipBeforeRelatedTo(property)) {
+      fail(`${object.name} places ${property} before related-to`);
+    }
+  }
+  for (const property of props.slice(relatedToIndex + 1)) {
+    if (relationshipBeforeRelatedTo(property)) fail(`${object.name} places relationship field ${property} after related-to`);
+  }
+}
 const interaction = allObjects.find((object) => object.name === 'Interaction');
 requireIncludes('Interaction canonical properties', interaction?.properties ?? [], [
   'participants',
@@ -232,11 +276,15 @@ if (
 }
 if (
   !templatesSource.includes('const related: string[] = []') ||
-  !templatesSource.includes('const optional: string[] = []') ||
+  !templatesSource.includes('const trailing: string[] = []') ||
+  !templatesSource.includes('const primaryBeforeRelatedTo = (p: string)') ||
+  !templatesSource.includes('const beforeRelatedTo = (p: string)') ||
   !templatesSource.includes("if (p === 'related-to')") ||
+  !templatesSource.includes('primaryBeforeRelatedTo(p)') ||
   !templatesSource.includes("p.startsWith('related-')") ||
+  !templatesSource.includes("String(spec?.type ?? '').toLowerCase() === 'node'") ||
   !templatesSource.includes('if (deferredRelatedTo) related.push(deferredRelatedTo)') ||
-  !templatesSource.includes('return [...required, ...related, ...optional]')
+  !templatesSource.includes('return [...primary, ...related, ...trailing]')
 ) {
   fail('generic related-to must be ordered after specific related fields and before trailing optional fields');
 }
@@ -259,7 +307,17 @@ if (
   !setupSource.includes("resetNativeNodeProperty(r, 'related-to')") ||
   !setupSource.includes('ensureRelatedToPropertyOrder') ||
   !setupSource.includes('await ensureRelatedToPropertyOrder(r);') ||
+  !setupSource.includes('ensurePrimaryDisplayPropertyOrder') ||
+  !setupSource.includes('PRIMARY_DISPLAY_PROPERTIES') ||
+  !setupSource.includes('propertiesBeforePrimaryDisplayFields') ||
   !setupSource.includes('ensureRelatedToBeforeTrailingAdminProperties') ||
+  !setupSource.includes('displayPropertyBeforeRelatedTo') ||
+  !setupSource.includes('relatedToTrailingDisplayPropertySpecs') ||
+  !setupSource.includes('afterPrimaryDisplayPropertySpecs') ||
+  !setupSource.includes('const relatedToIndex = props.indexOf') ||
+  !setupSource.includes("trailing.add('lss-object-type')") ||
+  !setupSource.includes('const isDate = String(spec.type ??') ||
+  !setupSource.includes('resolvePageFromIdentity(raw)') ||
   !setupSource.includes("^\\d+(?:\\s*,\\s*\\d+)*$") ||
   !setupSource.includes('nativePropertyOrder') ||
   !setupSource.includes('clearCapturedPropertyValues') ||
@@ -270,7 +328,8 @@ if (
   !setupSource.includes('Logseq would reject the type change') ||
   !setupSource.includes('(not [?entity :db/ident ?entityIdent])') ||
   !setupSource.includes('schema repair changed property order') ||
-  !setupSource.includes("name.startsWith('related-') || name === 'related-to'") ||
+  !setupSource.includes("clean.startsWith('related-')") ||
+  !setupSource.includes("displayPropertyBeforeRelatedTo(name, spec)") ||
   !setupSource.includes('repairRelatedToDisplayOrder') ||
   !repairSource.includes('ensureRelatedToPropertyOrder(result)') ||
   !repairSource.includes('ensureRelatedToBeforeTrailingAdminProperties(result)') ||
