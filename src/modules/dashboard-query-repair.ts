@@ -6,6 +6,8 @@ import {
   isAdvancedQueryBlockContent,
   propertyBlockRefId,
   QUERY_PROPERTY_KEY,
+  queryContentFromQueryPropertyValue,
+  queryCodeChildRefFromQueryProperty,
   readCanonicalProperty,
 } from './advanced-query-blocks';
 import { isSimpleQueryBlockContent, queryBlockNeedsRepair } from './query-edn';
@@ -102,13 +104,34 @@ export async function readDashboardQueryBlockContent(queryBlock: any): Promise<s
     string,
     unknown
   >;
-  const childId = propertyBlockRefId(
-    readCanonicalProperty(props, 'query') ?? props[`:${QUERY_PROPERTY_KEY}`],
-  );
-  if (childId == null || !logseq.Editor.getBlock) return fromSnapshot;
-  const child = await logseq.Editor.getBlock(childId).catch(() => null);
+  const queryProp = readCanonicalProperty(props, 'query') ?? props[`:${QUERY_PROPERTY_KEY}`];
+  const directContent = await queryContentFromQueryPropertyValue(queryProp);
+  if (isAdvancedQueryBlockContent(directContent)) return directContent;
+  const dsQueryProp = await (async () => {
+    if (!logseq.DB?.datascriptQuery) return undefined;
+    const numericParentId = Number(parentId);
+    if (!Number.isFinite(numericParentId) || numericParentId <= 0) return undefined;
+    try {
+      const rows = await logseq.DB.datascriptQuery(
+        `[:find ?v :in $ ?e :where [?e :logseq.property/query ?v]]`,
+        numericParentId,
+      );
+      return Array.isArray(rows) ? rows[0]?.[0] : undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+  const dsDirectContent = await queryContentFromQueryPropertyValue(dsQueryProp);
+  if (isAdvancedQueryBlockContent(dsDirectContent)) return dsDirectContent;
+  const childId = await queryCodeChildRefFromQueryProperty(queryProp);
+  const child = childId != null && logseq.Editor.getBlock
+    ? await logseq.Editor.getBlock(childId).catch(() => null)
+    : null;
   let result = child ? String((child as Record<string, unknown>).content ?? (child as Record<string, unknown>).title ?? '').trim() : fromSnapshot;
-  if (!result && queryBlock) {
+  if (
+    queryBlock &&
+    (!result || (!isAdvancedQueryBlockContent(result) && !isSimpleQueryBlockContent(result)))
+  ) {
     // fallback: scan the queryBlock's children for any that look like the edn child
     const kids = queryBlock.children ?? [];
     for (const ch of kids) {

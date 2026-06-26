@@ -5,14 +5,18 @@ import { safePageName } from '../core/names';
 import { formatError, sleep } from '../core/runner';
 import type { Result } from '../core/types';
 import { dashboardPageForObjectType, propertySpec, templateDefByObjectType } from '../registry';
-import { markRepairCooldown, scheduleAutoRepair } from './auto-repair';
+import { markRepairCooldown } from './auto-repair';
 import {
   configureDbAdvancedQueryBlock,
   dashboardQueryBlockForViewAsync,
   dbAdvancedQueryBlockNeedsStructureRepair,
+  expandBlockUi,
   filterProps,
   inspectDbQueryBlockStructure,
   isQueryLikeBlockAsync,
+  isManagedPageSectionHeading,
+  moveBlockAsChildViaHost,
+  pageSectionHeadingForView,
   pickCanonicalQueryBlock,
   queryTitleForView,
   queryBlockNeedsRepair,
@@ -86,10 +90,35 @@ function titleMatchesView(block: any, queryTitle: string, section: string): bool
   return Boolean(actual) && [queryTitle, section].some((label) => actual === normalizedQueryTitle(label));
 }
 
-function titleMatchesAnyView(block: any, views: ReturnType<typeof viewDefinitionsSafe>): boolean {
-  return views.some((view) =>
-    titleMatchesView(block, queryTitleForView(view), String(view.section ?? '').trim()),
-  );
+function queryTitleFromEdnContent(content: string): string | null {
+  const text = String(content ?? '').trim();
+  if (!text) return null;
+  const quoted = text.match(/:title\s+"((?:\\"|[^"])*)"/i);
+  if (quoted?.[1]) return quoted[1].replace(/\\"/g, '"').trim() || null;
+  const bare = text.match(/:title\s+([^\s}]+)/i);
+  return bare?.[1]?.trim() || null;
+}
+
+async function effectiveQueryBlockTitle(block: any): Promise<string> {
+  const direct = blockTitle(block);
+  if (direct) return direct;
+  if (!(await isQueryLikeBlockAsync(block))) return '';
+  const content = await readDashboardQueryBlockContent(block);
+  return queryTitleFromEdnContent(content) ?? '';
+}
+
+async function titleMatchesViewAsync(block: any, queryTitle: string, section: string): Promise<boolean> {
+  const actual = normalizedQueryTitle(await effectiveQueryBlockTitle(block));
+  return Boolean(actual) && [queryTitle, section].some((label) => actual === normalizedQueryTitle(label));
+}
+
+async function titleMatchesAnyViewAsync(block: any, views: ReturnType<typeof viewDefinitionsSafe>): Promise<boolean> {
+  for (const view of views) {
+    if (await titleMatchesViewAsync(block, queryTitleForView(view), String(view.section ?? '').trim())) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function currentViewSourceTagSet(views: ReturnType<typeof viewDefinitionsSafe>): Set<string> {
@@ -125,6 +154,71 @@ function dedupeBlocks(blocks: any[]): any[] {
   return out;
 }
 
+type ManagedHeadingBlock = { block: any; heading: string | null };
+
+function walkBlocksWithManagedHeading(blocks: any[], heading: string | null = null): ManagedHeadingBlock[] {
+  const out: ManagedHeadingBlock[] = [];
+  for (const block of blocks ?? []) {
+    const title = blockTitle(block);
+    const nextHeading = isManagedPageSectionHeading(title) ? title : heading;
+    out.push({ block, heading });
+    out.push(...walkBlocksWithManagedHeading(block?.children ?? [], nextHeading));
+  }
+  return out;
+}
+
+function dedupeBlockEntries(entries: ManagedHeadingBlock[]): ManagedHeadingBlock[] {
+  const seen = new Set<string>();
+  const out: ManagedHeadingBlock[] = [];
+  for (const entry of entries) {
+    const id = blockId(entry.block);
+    const key = id ? String(id) : JSON.stringify(entry.block);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(entry);
+  }
+  return out;
+}
+
+async function queryCandidateUnderHeading(
+  blocks: any[],
+  queryTitle: string,
+  section: string,
+  heading: string,
+): Promise<boolean> {
+  const headingKey = normalizedQueryTitle(heading);
+  for (const entry of walkBlocksWithManagedHeading(blocks)) {
+    if (normalizedQueryTitle(entry.heading ?? '') !== headingKey) continue;
+    const queryLike = await isQueryLikeBlockAsync(entry.block);
+    if (!queryLike && !(await managedQueryTitleCandidate(entry.block))) continue;
+    if (await titleMatchesViewAsync(entry.block, queryTitle, section)) return true;
+  }
+  return false;
+}
+
+function queryCandidatesUnderHeading(blocks: any[], candidates: any[], heading: string): any[] {
+  const candidateIds = new Set(candidates.map((candidate) => blockId(candidate)).filter(Boolean).map(String));
+  const headingKey = normalizedQueryTitle(heading);
+  const preferred: any[] = [];
+  for (const entry of walkBlocksWithManagedHeading(blocks)) {
+    const id = blockId(entry.block);
+    if (!id || !candidateIds.has(String(id))) continue;
+    if (normalizedQueryTitle(entry.heading ?? '') === headingKey) preferred.push(entry.block);
+  }
+  return preferred;
+}
+
+function queryCandidateIsUnderHeading(blocks: any[], candidate: any, heading: string): boolean {
+  return queryCandidatesUnderHeading(blocks, [candidate], heading).length > 0;
+}
+
+function anyQueryLikeChildSnapshot(block: any): boolean {
+  return (block?.children ?? []).some((child: any) => {
+    const content = String(child?.content ?? child?.title ?? '').trim();
+    return /#Query\b|:query\b|<% current page %>|\{\s*:title\b/i.test(content) || anyQueryLikeChildSnapshot(child);
+  });
+}
+
 async function rootQueryCandidates(
   blocks: any[],
   queryTitle: string,
@@ -132,9 +226,14 @@ async function rootQueryCandidates(
   queryContent: string,
 ): Promise<any[]> {
   const out: any[] = [];
-  for (const block of blocks ?? []) {
-    if (!(await isQueryLikeBlockAsync(block))) continue;
-    if (titleMatchesView(block, queryTitle, section)) {
+  for (const block of walkBlocks(blocks ?? [])) {
+    const queryLike = await isQueryLikeBlockAsync(block);
+    if (!queryLike && (await titleMatchesViewAsync(block, queryTitle, section)) && (await managedQueryTitleCandidate(block))) {
+      out.push(block);
+      continue;
+    }
+    if (!queryLike) continue;
+    if (await titleMatchesViewAsync(block, queryTitle, section)) {
       out.push(block);
       continue;
     }
@@ -142,6 +241,102 @@ async function rootQueryCandidates(
     if (!queryBlockNeedsRepair(content, queryContent)) out.push(block);
   }
   return dedupeBlocks(out);
+}
+
+async function canRemoveManagedHeadingBlock(block: any): Promise<boolean> {
+  for (const child of block?.children ?? []) {
+    if (await isQueryLikeBlockAsync(child)) continue;
+    if (isEmptyPlaceholder(child)) continue;
+    return false;
+  }
+  return true;
+}
+
+async function removeDuplicateManagedHeadingBlocks(
+  result: Result,
+  rootBlocks: any[],
+  objectType: string,
+): Promise<number> {
+  if (!logseq.Editor.removeBlock) return 0;
+  const groups = new Map<string, any[]>();
+  for (const block of rootBlocks ?? []) {
+    const title = blockTitle(block);
+    if (!isManagedPageSectionHeading(title)) continue;
+    const key = normalizedQueryTitle(title);
+    const items = groups.get(key) ?? [];
+    items.push(block);
+    groups.set(key, items);
+  }
+
+  let removed = 0;
+  for (const [key, blocks] of groups) {
+    if (blocks.length <= 1) continue;
+    let keep = blocks.find((block) => anyQueryLikeChildSnapshot(block)) ?? null;
+    if (!keep) {
+      for (const block of blocks) {
+        if (!(await canRemoveManagedHeadingBlock(block))) {
+          keep = block;
+          break;
+        }
+      }
+    }
+    keep ??= blocks[0];
+    const keepId = blockId(keep);
+    for (const block of blocks) {
+      if (blockId(block) === keepId) continue;
+      if (!(await canRemoveManagedHeadingBlock(block))) {
+        result.notes.push(`Kept duplicate ${blockTitle(block)} heading on ${objectType} because it contains non-query content.`);
+        continue;
+      }
+      if (await removeDashboardQueryBlock(result, block, `${objectType} duplicate heading ${key}`)) removed++;
+    }
+  }
+  return removed;
+}
+
+function findRootHeadingBlock(blocks: any[], heading: string): any | null {
+  const target = normalizedQueryTitle(heading);
+  return (blocks ?? []).find((block) => normalizedQueryTitle(blockTitle(block)) === target) ?? null;
+}
+
+async function ensureRootHeadingBlock(
+  result: Result,
+  blocks: any[],
+  pageName: string,
+  pageRootId: string | null,
+  heading: string,
+  objectType: string,
+): Promise<string | null> {
+  const existing = findRootHeadingBlock(blocks, heading);
+  const existingId = blockId(existing);
+  if (existingId) {
+    await expandBlockUi(existingId);
+    return existingId;
+  }
+  if (!logseq.Editor.insertBlock && !logseq.Editor.appendBlockInPage) return null;
+  try {
+    let inserted: any = null;
+    if (pageRootId && logseq.Editor.insertBlock) {
+      inserted = await logseq.Editor.insertBlock(pageRootId, heading, {
+        sibling: false,
+        before: false,
+        end: true,
+      });
+    }
+    if (!inserted && logseq.Editor.appendBlockInPage) {
+      inserted = await logseq.Editor.appendBlockInPage(pageName, heading);
+    }
+    const id = blockId(inserted);
+    if (id) {
+      result.actions.push(`INSERT page section heading: ${objectType} / ${heading}`);
+      await expandBlockUi(id);
+      await sleep(THROTTLE_MS);
+    }
+    return id;
+  } catch (error) {
+    result.errors.push(`insert page section heading ${objectType}/${heading}: ${formatError(error)}`);
+    return null;
+  }
 }
 
 async function removeDuplicateDashboardQueryBlocksByTitle(
@@ -160,26 +355,32 @@ async function removeDuplicateDashboardQueryBlocksByTitle(
   }
   if (!viewByTitle.size) return 0;
 
-  const groups = new Map<string, any[]>();
-  for (const block of walkBlocks(blocks)) {
-    const title = normalizedQueryTitle(blockTitle(block));
+  const groups = new Map<string, ManagedHeadingBlock[]>();
+  for (const entry of walkBlocksWithManagedHeading(blocks)) {
+    const block = entry.block;
+    const title = normalizedQueryTitle(await effectiveQueryBlockTitle(block));
     if (!title || !viewByTitle.has(title)) continue;
     if (!(await managedQueryTitleCandidate(block))) continue;
     const items = groups.get(title) ?? [];
-    items.push(block);
+    items.push(entry);
     groups.set(title, items);
   }
 
   let removed = 0;
   for (const [title, matches] of groups) {
-    const unique = dedupeBlocks(matches);
+    const unique = dedupeBlockEntries(matches);
     if (unique.length <= 1) continue;
     const view = viewByTitle.get(title);
     if (!view) continue;
     const queryContent = await dashboardQueryBlockForViewAsync(view, pageName, pageEntity);
-    const canonical = (await pickCanonicalQueryBlock(unique, queryContent)) ?? unique[0];
+    const candidates = unique.map((entry) => entry.block);
+    const preferredCandidates = queryCandidatesUnderHeading(blocks, candidates, pageSectionHeadingForView(view));
+    const canonical =
+      (await pickCanonicalQueryBlock(preferredCandidates, queryContent)) ??
+      (await pickCanonicalQueryBlock(candidates, queryContent)) ??
+      candidates[0];
     const canonicalId = blockId(canonical);
-    for (const duplicate of unique) {
+    for (const duplicate of unique.map((entry) => entry.block)) {
       if (blockId(duplicate) === canonicalId) continue;
       if (await removeDashboardQueryBlock(result, duplicate, `${objectType} duplicate ${queryTitleForView(view)}`)) removed++;
     }
@@ -240,9 +441,23 @@ async function configureTitledQueryBlock(
 ): Promise<boolean> {
   if (!(await isDbGraph())) {
     await updateBlockContent(result, block, queryContent, `Set query content for ${label}`);
+    const plainId = blockId(block);
+    if (plainId) await expandBlockUi(plainId);
     return true;
   }
-  let ok = await configureDbAdvancedQueryBlock(result, block, queryContent);
+  const initialStruct = await inspectDbQueryBlockStructure(block);
+  const visibleEdnChildNeedsRebuild =
+    initialStruct.hasQueryClassTag &&
+    initialStruct.childTitleHasEdn &&
+    !initialStruct.hasQueryProperty;
+
+  let ok = false;
+  if (visibleEdnChildNeedsRebuild) {
+    ok = await forceCreateQueryChild(result, block, queryContent);
+  }
+  if (!ok) {
+    ok = await configureDbAdvancedQueryBlock(result, block, queryContent);
+  }
   if (!ok) {
     await sleep(150);
     ok = await configureDbAdvancedQueryBlock(result, block, queryContent);
@@ -250,9 +465,10 @@ async function configureTitledQueryBlock(
   if (!ok) {
     const struct = await inspectDbQueryBlockStructure(block);
     const hasTagButNoChild = struct.hasQueryClassTag && !struct.hasQueryProperty;
-    const hasEdnButNoDisplay =
-      struct.hasQueryClassTag && struct.hasQueryProperty && struct.childTitleHasEdn && !struct.childDisplayTypeIsCode;
-    if (hasTagButNoChild || hasEdnButNoDisplay) {
+    const hasEdnButNoDisplay = false;
+    const hasVisibleEdnChild =
+      struct.hasQueryClassTag && struct.childTitleHasEdn && !struct.hasQueryProperty;
+    if (hasTagButNoChild || hasEdnButNoDisplay || hasVisibleEdnChild) {
       ok = await forceCreateQueryChild(result, block, queryContent);
     }
   }
@@ -261,14 +477,18 @@ async function configureTitledQueryBlock(
     const recheck = await inspectDbQueryBlockStructure(block);
     ok = !dbAdvancedQueryBlockNeedsStructureRepair(recheck);
   }
-  if (ok) await updateBlockContent(result, block, queryTitle, `Set query title to ${queryTitle}`);
+  if (ok) {
+    await updateBlockContent(result, block, queryTitle, `Set query title to ${queryTitle}`);
+    const id = blockId(block);
+    if (id) await expandBlockUi(id);
+  }
   return ok;
 }
 
 async function insertRootQueryBlock(
   result: Result,
   pageName: string,
-  pageRootId: string | null,
+  parentBlockId: string | null,
   queryTitle: string,
   queryContent: string,
   label: string,
@@ -281,14 +501,18 @@ async function insertRootQueryBlock(
     const isDb = await isDbGraph();
     const shellContent = isDb ? queryTitle : queryContent;
     let inserted: any = null;
-    if (pageRootId && logseq.Editor.insertBlock) {
-      inserted = await logseq.Editor.insertBlock(pageRootId, shellContent, {
+    if (parentBlockId && logseq.Editor.insertBlock) {
+      inserted = await logseq.Editor.insertBlock(parentBlockId, shellContent, {
         sibling: false,
         before: false,
         end: true,
       });
+      if (!inserted) {
+        result.errors.push(`insert dashboard query ${label}: failed to insert under managed heading`);
+        return null;
+      }
     }
-    if (!inserted && logseq.Editor.appendBlockInPage) {
+    if (!parentBlockId && !inserted && logseq.Editor.appendBlockInPage) {
       inserted = await logseq.Editor.appendBlockInPage(pageName, shellContent);
     }
     if (!inserted) {
@@ -296,19 +520,21 @@ async function insertRootQueryBlock(
       return null;
     }
     result.actions.push(`INSERT page-level dashboard query shell: ${label}`);
+    const insertedIdBefore = blockId(inserted);
+    if (insertedIdBefore) await expandBlockUi(insertedIdBefore);
+    if (parentBlockId) await expandBlockUi(parentBlockId);
     await sleep(THROTTLE_MS);
     if (isDb) {
       const queryTagId = await resolveQueryClassTagId();
       const insertedId = blockId(inserted);
       if (queryTagId && insertedId) await logseq.Editor.addBlockTag(insertedId, queryTagId).catch(() => {});
       await sleep(20);
-      if (!(await configureTitledQueryBlock(result, inserted, queryContent, queryTitle, label))) {
-        result.notes.push(`Page-level query shell created for ${label} (auto-repair will finalize if needed).`);
-        try {
-          scheduleAutoRepair(pageName);
-        } catch {
-          /* non-critical background scheduling */
-        }
+      const freshInserted =
+        insertedId && logseq.Editor.getBlock
+          ? ((await logseq.Editor.getBlock(insertedId, { includeChildren: true }).catch(() => null)) ?? inserted)
+          : inserted;
+      if (!(await configureTitledQueryBlock(result, freshInserted, queryContent, queryTitle, label))) {
+        result.errors.push(`dashboard-query: advanced query shell was not finalized for ${label}; keeping shell for non-destructive retry.`);
       }
     }
     return inserted;
@@ -316,6 +542,31 @@ async function insertRootQueryBlock(
     result.errors.push(`insert dashboard query ${label}: ${formatError(error)}`);
     return null;
   }
+}
+
+async function moveCanonicalQueryUnderHeading(
+  result: Result,
+  blocks: any[],
+  candidates: any[],
+  parentBlockId: string | null,
+  heading: string,
+  expectedContent: string,
+  label: string,
+): Promise<boolean> {
+  if (!parentBlockId || !candidates.length) return false;
+  const canonical = (await pickCanonicalQueryBlock(candidates, expectedContent)) ?? candidates[0];
+  if (!canonical || queryCandidateIsUnderHeading(blocks, canonical, heading)) return false;
+  const id = blockId(canonical);
+  if (!id) return false;
+  const moved = await moveBlockAsChildViaHost(id, parentBlockId);
+  if (!moved.ok) {
+    result.notes.push(`Could not move existing dashboard query under ${heading} for ${label}: ${moved.error ?? 'unknown error'}.`);
+    return false;
+  }
+  result.actions.push(`MOVE dashboard query under ${heading}: ${label}`);
+  await expandBlockUi(id);
+  await expandBlockUi(parentBlockId);
+  return true;
 }
 
 async function removeStaleDashboardQueryBlocks(
@@ -330,15 +581,17 @@ async function removeStaleDashboardQueryBlocks(
 
   let removed = 0;
   for (const block of rootBlocks ?? []) {
+    if (isManagedPageSectionHeading(blockTitle(block))) continue;
     if (await isQueryLikeBlockAsync(block)) {
-      if (titleMatchesAnyView(block, views)) continue;
+      if (await titleMatchesAnyViewAsync(block, views)) continue;
       if (!(await queryBlockUsesCurrentSource(block, currentSources))) continue;
       if (await removeDashboardQueryBlock(result, block, `${objectType} stale query`)) removed++;
       continue;
     }
 
     const section = sectionNameFromLine(String(block?.content ?? ''));
-    if (!section || titleMatchesAnyView(block, views)) continue;
+    if (section && isManagedPageSectionHeading(section)) continue;
+    if (!section || (await titleMatchesAnyViewAsync(block, views))) continue;
     let hasStaleManagedQuery = false;
     for (const child of block?.children ?? []) {
       if (!(await isQueryLikeBlockAsync(child))) continue;
@@ -351,6 +604,78 @@ async function removeStaleDashboardQueryBlocks(
     if (await removeLegacySectionWrapper(result, block, `${objectType} stale ${section}`)) removed++;
   }
   return removed;
+}
+
+async function removeBlankManagedQueryShells(
+  result: Result,
+  rootBlocks: any[],
+  objectType: string,
+): Promise<number> {
+  if (!logseq.Editor.removeBlock) return 0;
+  let removed = 0;
+  for (const entry of walkBlocksWithManagedHeading(rootBlocks)) {
+    if (!entry.heading || !isManagedPageSectionHeading(entry.heading)) continue;
+    const title = blockTitle(entry.block);
+    if (normalizedQueryTitle(title)) continue;
+    if (!(await isQueryLikeBlockAsync(entry.block))) continue;
+    const contentTitle = queryTitleFromEdnContent(await readDashboardQueryBlockContent(entry.block));
+    if (normalizedQueryTitle(contentTitle ?? '')) continue;
+    const struct = await inspectDbQueryBlockStructure(entry.block);
+    if (struct.hasQueryProperty || struct.queryEdnInChild || struct.rawEdnInParentContent) continue;
+    if (await removeDashboardQueryBlock(result, entry.block, `${objectType} blank query shell under ${entry.heading}`)) {
+      removed++;
+    }
+  }
+  return removed;
+}
+
+async function refreshPageBlocks(pageName: string, fallback: any[]): Promise<any[]> {
+  let freshBlocks = await getBlocks(pageName);
+  if (!freshBlocks?.length && safePageName(pageName) !== pageName) {
+    freshBlocks = await getBlocks(safePageName(pageName));
+  }
+  return freshBlocks?.length ? freshBlocks : fallback;
+}
+
+async function enforceDashboardQueryPlacement(
+  result: Result,
+  blocks: any[],
+  objectType: string,
+  views: ReturnType<typeof viewDefinitionsSafe>,
+  pageName: string,
+  pageEntity: any,
+  pageRootId: string | null,
+): Promise<number> {
+  let changed = 0;
+  let freshBlocks = blocks;
+  const ensuredHeadingIds = new Map<string, string | null>();
+
+  for (const view of views) {
+    const section = String(view.section ?? '').trim();
+    if (!section) continue;
+    const queryContent = await dashboardQueryBlockForViewAsync(view, pageName, pageEntity);
+    if (!queryContent) continue;
+    const queryTitle = queryTitleForView(view);
+    const queryGroupHeading = pageSectionHeadingForView(view);
+    if (await queryCandidateUnderHeading(freshBlocks, queryTitle, section, queryGroupHeading)) continue;
+
+    if (!ensuredHeadingIds.has(queryGroupHeading)) {
+      const ensuredId = await ensureRootHeadingBlock(result, freshBlocks, pageName, pageRootId, queryGroupHeading, objectType);
+      ensuredHeadingIds.set(queryGroupHeading, ensuredId);
+      if (ensuredId) freshBlocks = await refreshPageBlocks(pageName, freshBlocks);
+    }
+    const queryParentId = ensuredHeadingIds.get(queryGroupHeading) ?? blockId(findRootHeadingBlock(freshBlocks, queryGroupHeading));
+    if (!queryParentId) continue;
+
+    const candidates = await rootQueryCandidates(freshBlocks, queryTitle, section, queryContent);
+    if (!candidates.length) continue;
+    if (await moveCanonicalQueryUnderHeading(result, freshBlocks, candidates, queryParentId, queryGroupHeading, queryContent, `${objectType} / ${section}`)) {
+      changed++;
+      freshBlocks = await refreshPageBlocks(pageName, freshBlocks);
+    }
+  }
+
+  return changed;
 }
 
 export async function repairDashboardQueries(
@@ -382,16 +707,17 @@ export async function repairDashboardQueries(
 
   const pageEntity = await getPage(pageName);
   const pageRootId = blockId(pageEntity);
+  changed += await removeBlankManagedQueryShells(result, freshBlocks, objectType);
+  if (changed) {
+    freshBlocks = await refreshPageBlocks(pageName, blocks);
+  }
   changed += await removeDuplicateDashboardQueryBlocksByTitle(result, freshBlocks, objectType, views, pageName, pageEntity);
   if (changed) {
-    freshBlocks = await getBlocks(pageName);
-    if (!freshBlocks?.length && safePageName(pageName) !== pageName) {
-      freshBlocks = await getBlocks(safePageName(pageName));
-    }
-    if (!freshBlocks?.length) freshBlocks = blocks;
+    freshBlocks = await refreshPageBlocks(pageName, blocks);
   }
   const sectionBlocks = findSectionBlocks(freshBlocks);
   const cleanedLegacySectionIds = new Set<string>();
+  const ensuredHeadingIds = new Map<string, string | null>();
 
   for (const view of views) {
     const section = String(view.section ?? '').trim();
@@ -402,60 +728,99 @@ export async function repairDashboardQueries(
     if (!queryContent) continue;
     const queryTitle = queryTitleForView(view);
     const label = `${objectType} / ${section}`;
-    const rootQueries = await rootQueryCandidates(freshBlocks, queryTitle, section, queryContent);
+    const queryGroupHeading = pageSectionHeadingForView(view);
+    if (!ensuredHeadingIds.has(queryGroupHeading)) {
+      const ensuredId = await ensureRootHeadingBlock(result, freshBlocks, pageName, pageRootId, queryGroupHeading, objectType);
+      ensuredHeadingIds.set(queryGroupHeading, ensuredId);
+      if (ensuredId && !findRootHeadingBlock(freshBlocks, queryGroupHeading)) {
+        freshBlocks = await getBlocks(pageName);
+        if (!freshBlocks?.length && safePageName(pageName) !== pageName) {
+          freshBlocks = await getBlocks(safePageName(pageName));
+        }
+        if (!freshBlocks?.length) freshBlocks = blocks;
+      }
+    }
+    const queryParentId =
+      ensuredHeadingIds.get(queryGroupHeading) ??
+      blockId(findRootHeadingBlock(freshBlocks, queryGroupHeading));
+    if (!queryParentId) {
+      result.errors.push(`dashboard-query: missing managed heading ${queryGroupHeading} for ${label}; refusing to create root-level query.`);
+      continue;
+    }
+    let rootQueries = await rootQueryCandidates(freshBlocks, queryTitle, section, queryContent);
+    if (rootQueries.length && queryParentId) {
+      if (await moveCanonicalQueryUnderHeading(result, freshBlocks, rootQueries, queryParentId, queryGroupHeading, queryContent, label)) {
+        changed++;
+        freshBlocks = await refreshPageBlocks(pageName, blocks);
+        rootQueries = await rootQueryCandidates(freshBlocks, queryTitle, section, queryContent);
+      }
+    }
+    if (rootQueries.length && queryParentId && !(await queryCandidateUnderHeading(freshBlocks, queryTitle, section, queryGroupHeading))) {
+      if (await insertRootQueryBlock(result, pageName, queryParentId, queryTitle, queryContent, label)) {
+        changed++;
+        freshBlocks = await refreshPageBlocks(pageName, blocks);
+        rootQueries = await rootQueryCandidates(freshBlocks, queryTitle, section, queryContent);
+      }
+    }
     let pageLevelQueryReady = rootQueries.length > 0;
 
     if (rootQueries.length) {
-      const canonical = (await pickCanonicalQueryBlock(rootQueries, queryContent)) ?? rootQueries[0];
+      const preferredQueries = queryCandidatesUnderHeading(freshBlocks, rootQueries, queryGroupHeading);
+      const canonical =
+        (await pickCanonicalQueryBlock(preferredQueries, queryContent)) ??
+        (await pickCanonicalQueryBlock(rootQueries, queryContent)) ??
+        preferredQueries[0] ??
+        rootQueries[0];
       const canonicalId = blockId(canonical);
-      const duplicateCount = rootQueries.length - 1;
-
-      for (const existing of rootQueries) {
-        if (blockId(existing) === canonicalId) continue;
-        if (await removeDashboardQueryBlock(result, existing, label)) {
-          changed++;
-        }
-      }
-      if (duplicateCount > 0) {
-        result.notes.push(
-          `Dashboard query dedupe: removed ${duplicateCount} extra query block(s) under ${section}; kept one canonical block.`,
-        );
-      }
+      let canonicalUsable = true;
+      if (canonicalId) await expandBlockUi(canonicalId);
+      if (queryParentId) await expandBlockUi(queryParentId);
 
       const before = await readDashboardQueryBlockContent(canonical);
       const needsContent = queryBlockNeedsRepair(before, queryContent);
       const struct = await inspectDbQueryBlockStructure(canonical);
       const needsStructure = dbAdvancedQueryBlockNeedsStructureRepair(struct);
-      const needsTitle = !titleMatchesView(canonical, queryTitle, section);
+      const needsTitle = !(await titleMatchesViewAsync(canonical, queryTitle, section));
       if (needsContent || needsStructure || needsTitle) {
         if (await configureTitledQueryBlock(result, canonical, queryContent, queryTitle, label)) {
           result.actions.push(`REPAIRED page-level advanced query for ${label}`);
           changed++;
         } else {
-          for (const existing of rootQueries) {
-            if (await removeDashboardQueryBlock(result, existing, label)) {
-              changed++;
-            }
-          }
-          pageLevelQueryReady = false;
-          if (await insertRootQueryBlock(result, pageName, pageRootId, queryTitle, queryContent, label)) {
-            result.actions.push(`REBUILT advanced query from scratch for ${label}`);
-            changed++;
-            pageLevelQueryReady = true;
-          }
+          result.errors.push(`dashboard-query: could not finalize ${label}; keeping existing query block for non-destructive retry.`);
+          canonicalUsable = true;
+          pageLevelQueryReady = true;
         }
       } else {
         checked++;
       }
+
+      if (canonicalUsable && pageLevelQueryReady && canonicalId) {
+        const duplicateCount = rootQueries.length - 1;
+        for (const existing of rootQueries) {
+          if (blockId(existing) === canonicalId) continue;
+          if (await removeDashboardQueryBlock(result, existing, label)) {
+            changed++;
+          }
+        }
+        if (duplicateCount > 0) {
+          result.notes.push(
+            `Dashboard query dedupe: removed ${duplicateCount} extra query block(s) under ${section}; kept one canonical block.`,
+          );
+        }
+      }
     } else {
-      if (await insertRootQueryBlock(result, pageName, pageRootId, queryTitle, queryContent, label)) {
+      if (await insertRootQueryBlock(result, pageName, queryParentId, queryTitle, queryContent, label)) {
         changed++;
         pageLevelQueryReady = true;
       }
     }
 
     const sectionId = sectionBlock ? blockId(sectionBlock) : null;
-    if (pageLevelQueryReady && sectionBlock && (!sectionId || !cleanedLegacySectionIds.has(sectionId))) {
+    const sectionIsManagedHeading = sectionBlock
+      ? isManagedPageSectionHeading(sectionNameFromLine(String(sectionBlock?.content ?? '')) || blockTitle(sectionBlock))
+      : false;
+    const sectionIsQueryBlock = sectionBlock ? await isQueryLikeBlockAsync(sectionBlock) : false;
+    if (pageLevelQueryReady && sectionBlock && !sectionIsManagedHeading && !sectionIsQueryBlock && (!sectionId || !cleanedLegacySectionIds.has(sectionId))) {
       if (await removeLegacySectionWrapper(result, sectionBlock, label)) {
         changed++;
         if (sectionId) cleanedLegacySectionIds.add(sectionId);
@@ -463,8 +828,16 @@ export async function repairDashboardQueries(
     }
   }
 
-  const afterRepairBlocks = await getBlocks(pageName);
-  changed += await removeStaleDashboardQueryBlocks(result, afterRepairBlocks, objectType, views);
+  const afterRepairBlocks = await refreshPageBlocks(pageName, blocks);
+  changed += await enforceDashboardQueryPlacement(result, afterRepairBlocks, objectType, views, pageName, pageEntity, pageRootId);
+  const afterPlacementBlocks = changed ? await refreshPageBlocks(pageName, afterRepairBlocks) : afterRepairBlocks;
+  changed += await removeDuplicateDashboardQueryBlocksByTitle(result, afterPlacementBlocks, objectType, views, pageName, pageEntity);
+  const afterDedupeBlocks = changed ? await refreshPageBlocks(pageName, afterPlacementBlocks) : afterPlacementBlocks;
+  changed += await removeStaleDashboardQueryBlocks(result, afterDedupeBlocks, objectType, views);
+  const afterStaleBlocks = changed ? await refreshPageBlocks(pageName, afterDedupeBlocks) : afterDedupeBlocks;
+  changed += await removeDuplicateManagedHeadingBlocks(result, afterStaleBlocks, objectType);
+  const afterHeadingDedupeBlocks = changed ? await refreshPageBlocks(pageName, afterStaleBlocks) : afterStaleBlocks;
+  changed += await removeBlankManagedQueryShells(result, afterHeadingDedupeBlocks, objectType);
 
   result.notes.push(
     `Dashboard query repair: inferred ${objectType}; changed/inserted ${changed} query block(s), checked ${checked} existing query block(s).`,

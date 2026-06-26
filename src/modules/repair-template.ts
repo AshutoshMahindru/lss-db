@@ -5,7 +5,14 @@ import type { Result } from '../core/types';
 import { templateDefByObjectType } from '../registry';
 import type { RegistryObject } from '../registry/types';
 import { parseTemplateOutline } from './templates';
-import { sectionNameFromLine, viewDefinitionsSafe } from './queries';
+import {
+  isManagedPageSectionHeading,
+  isObsoletePageSectionHeading,
+  PAGE_SECTION_HEADING_ORDER,
+  PAGE_SECTION_HEADINGS,
+  sectionNameFromLine,
+  viewDefinitionsSafe,
+} from './queries';
 
 function normalizedSection(value: string): string {
   return String(value ?? '')
@@ -52,6 +59,76 @@ function templateSectionNames(obj: RegistryObject): string[] {
   return out;
 }
 
+function findRootHeading(blocks: any[], heading: string): any | null {
+  const key = normalizedSection(heading);
+  return (blocks ?? []).find((block) => normalizedSection(String(block?.content ?? block?.title ?? '')) === key) ?? null;
+}
+
+function hasMeaningfulChildren(block: any): boolean {
+  for (const child of block?.children ?? []) {
+    const content = String(child?.content ?? child?.title ?? '').trim();
+    if (content && content !== '-') return true;
+    if (hasMeaningfulChildren(child)) return true;
+  }
+  return false;
+}
+
+async function removeObsoleteRootHeadings(result: Result, blocks: any[], obj: RegistryObject): Promise<number> {
+  if (!logseq.Editor.removeBlock) return 0;
+  let removed = 0;
+  for (const block of blocks ?? []) {
+    const title = String(block?.content ?? block?.title ?? '');
+    if (!isObsoletePageSectionHeading(title)) continue;
+    if (hasMeaningfulChildren(block)) {
+      result.notes.push(`Kept obsolete page heading ${title.trim()} on ${obj.name} because it contains content.`);
+      continue;
+    }
+    const id = blockId(block);
+    if (!id) continue;
+    try {
+      await logseq.Editor.removeBlock(id);
+      result.actions.push(`REMOVE obsolete page section heading: ${obj.name} / ${title.trim()}`);
+      removed++;
+      await sleep(THROTTLE_MS);
+    } catch (error) {
+      result.errors.push(`remove obsolete page heading ${obj.name}/${title.trim()}: ${formatError(error)}`);
+    }
+  }
+  return removed;
+}
+
+async function ensureRootHeading(
+  result: Result,
+  pageName: string,
+  pageRootBlockId: string | null | undefined,
+  blocks: any[],
+  heading: string,
+  obj: RegistryObject,
+): Promise<{ id: string | null; inserted: number }> {
+  const existing = findRootHeading(blocks, heading);
+  const existingId = blockId(existing);
+  if (existingId) return { id: existingId, inserted: 0 };
+
+  let block = pageRootBlockId && logseq.Editor.insertBlock
+    ? await logseq.Editor.insertBlock(pageRootBlockId, heading, {
+      sibling: false,
+      before: false,
+      end: true,
+    })
+    : null;
+  if (!block && logseq.Editor.appendBlockInPage) {
+    block = await logseq.Editor.appendBlockInPage(pageName, heading);
+  }
+  const id = blockId(block);
+  if (!id) {
+    result.errors.push(`insert page section heading ${obj.name}/${heading}: no block returned by Logseq`);
+    return { id: null, inserted: 0 };
+  }
+  result.actions.push(`INSERT page section heading: ${obj.name} / ${heading}`);
+  await sleep(THROTTLE_MS);
+  return { id, inserted: 1 };
+}
+
 export async function materializeTemplateSections(
   result: Result,
   pageName: string,
@@ -60,7 +137,6 @@ export async function materializeTemplateSections(
   pageRootBlockId?: string | null,
 ): Promise<number> {
   const sections = templateSectionNames(obj);
-  if (!sections.length) return 0;
   if (!logseq.Editor.appendBlockInPage && !logseq.Editor.insertBlock) {
     result.errors.push(`template sections ${obj.name}: no page block insert API available`);
     return 0;
@@ -68,12 +144,25 @@ export async function materializeTemplateSections(
 
   const existing = existingSections(blocks);
   let inserted = 0;
+  inserted += await removeObsoleteRootHeadings(result, blocks, obj);
+  if (inserted) blocks = await getBlocks(pageName);
+  let nativeSectionsHeadingId: string | null = null;
+  for (const heading of PAGE_SECTION_HEADING_ORDER) {
+    const ensured = await ensureRootHeading(result, pageName, pageRootBlockId, blocks, heading, obj);
+    inserted += ensured.inserted;
+    if (heading === PAGE_SECTION_HEADINGS.nativeSections) nativeSectionsHeadingId = ensured.id;
+    if (ensured.inserted) {
+      blocks = await getBlocks(pageName);
+    }
+  }
+
   for (const section of sections) {
     const key = normalizedSection(section);
+    if (isManagedPageSectionHeading(section)) continue;
     if (existing.has(key)) continue;
     try {
-      let block = pageRootBlockId && logseq.Editor.insertBlock
-        ? await logseq.Editor.insertBlock(pageRootBlockId, section, {
+      let block = nativeSectionsHeadingId && logseq.Editor.insertBlock
+        ? await logseq.Editor.insertBlock(nativeSectionsHeadingId, section, {
           sibling: false,
           before: false,
           end: true,

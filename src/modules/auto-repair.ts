@@ -239,6 +239,10 @@ async function pageQualifiesForAutoRepair(pageName: string): Promise<boolean> {
 }
 
 async function runAutoRepair(pageName: string): Promise<void> {
+  if (isRepairSessionActive()) {
+    scheduleAutoRepair(pageName);
+    return;
+  }
   if (shouldSkipPage(pageName) || repairingPages.has(pageName)) return;
 
   const page = await readPageRecord(pageName);

@@ -33,6 +33,44 @@ function normalizedSectionName(value: string): string {
   return String(value ?? '').trim().toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ');
 }
 
+export const PAGE_SECTION_HEADINGS = {
+  nativeSections: 'NATIVE SECTIONS',
+  relatedEntities: 'RELATED ENTITIES',
+  genericEntities: 'GENERIC ENTITIES',
+  forms: 'FORMS',
+  reviews: 'REVIEWS',
+  dates: 'DATES',
+} as const;
+
+export const PAGE_SECTION_HEADING_ORDER = [
+  PAGE_SECTION_HEADINGS.nativeSections,
+  PAGE_SECTION_HEADINGS.relatedEntities,
+  PAGE_SECTION_HEADINGS.genericEntities,
+  PAGE_SECTION_HEADINGS.forms,
+  PAGE_SECTION_HEADINGS.reviews,
+  PAGE_SECTION_HEADINGS.dates,
+] as const;
+
+export const QUERY_PAGE_SECTION_HEADINGS = [
+  PAGE_SECTION_HEADINGS.relatedEntities,
+  PAGE_SECTION_HEADINGS.genericEntities,
+  PAGE_SECTION_HEADINGS.forms,
+  PAGE_SECTION_HEADINGS.reviews,
+  PAGE_SECTION_HEADINGS.dates,
+] as const;
+
+export const OBSOLETE_PAGE_SECTION_HEADINGS = ['PROPERTIES'] as const;
+
+export function isManagedPageSectionHeading(value: string): boolean {
+  const key = normalizedSectionName(value);
+  return PAGE_SECTION_HEADING_ORDER.some((heading) => normalizedSectionName(heading) === key);
+}
+
+export function isObsoletePageSectionHeading(value: string): boolean {
+  const key = normalizedSectionName(value);
+  return OBSOLETE_PAGE_SECTION_HEADINGS.some((heading) => normalizedSectionName(heading) === key);
+}
+
 function equivalentSectionKeys(value: string): Set<string> {
   const key = normalizedSectionName(value);
   const keys = new Set<string>([key]);
@@ -91,6 +129,43 @@ function sameSourceTags(left: ViewDefinition, right: ViewDefinition): boolean {
 
 export function sourceTagsForView(view: ViewDefinition): string[] {
   return (view.sourceTags ?? []).map((tag) => safeTag(String(tag))).filter(Boolean);
+}
+
+function objectForSourceTag(tag: string, objects: RegistryObject[]): RegistryObject | undefined {
+  const sourceTag = safeTag(tag);
+  return objects.find((object) => safeTag(object.tag || object.name) === sourceTag || safeTag(object.name) === sourceTag);
+}
+
+function sourceTagsIncludeFormType(sourceTags: string[], test: (object: RegistryObject) => boolean): boolean {
+  return sourceTags.some((tag) => {
+    const form = objectForSourceTag(tag, registry.formTypes ?? []);
+    return Boolean(form && test(form));
+  });
+}
+
+export function pageSectionHeadingForView(view: ViewDefinition): string {
+  const intent = String(view.queryIntent ?? view.intent ?? '').trim().toLowerCase();
+  const sourceTags = sourceTagsForView(view);
+  if (sourceTagsIncludeFormType(sourceTags, (form) => /review$/i.test(form.name) || /review$/i.test(form.tag))) {
+    return PAGE_SECTION_HEADINGS.reviews;
+  }
+  if (sourceTagsIncludeFormType(sourceTags, (form) => ['ImportantDate', 'Event'].includes(form.name))) {
+    return PAGE_SECTION_HEADINGS.dates;
+  }
+  if (intent.startsWith('generic ')) return PAGE_SECTION_HEADINGS.genericEntities;
+  if (sourceTags.some((tag) => objectForSourceTag(tag, registry.formTypes ?? []))) {
+    return PAGE_SECTION_HEADINGS.forms;
+  }
+  if (intent.startsWith('form ')) return PAGE_SECTION_HEADINGS.forms;
+  if (
+    sourceTags.some((tag) => {
+      const object = objectForSourceTag(tag, registry.entityTypes ?? []);
+      return object && normalizeAreaRef(object.area) === 'Area/Cross-Cutting';
+    })
+  ) {
+    return PAGE_SECTION_HEADINGS.genericEntities;
+  }
+  return PAGE_SECTION_HEADINGS.relatedEntities;
 }
 
 export function sourceTagsFromQueryContent(content: string): string[] {

@@ -24,6 +24,12 @@ import {
   isAdvancedQueryBlockContent,
   isQueryLikeBlockAsync,
   isQueryLikeContent,
+  isManagedPageSectionHeading,
+  isObsoletePageSectionHeading,
+  PAGE_SECTION_HEADING_ORDER,
+  PAGE_SECTION_HEADINGS,
+  pageSectionHeadingForView,
+  QUERY_PAGE_SECTION_HEADINGS,
   queryBlockContent,
   queryTitleForView,
   readDashboardQueryBlockContent,
@@ -175,6 +181,50 @@ function splitTemplateSections(lines: OutlineLine[]): OutlineLine[] {
   return sections;
 }
 
+function lineMatchesView(line: OutlineLine, views: import('../registry/types').ViewDefinition[]): boolean {
+  const section = sectionNameFromLine(line.content);
+  const label = queryBlockLabelKey(section || line.content);
+  return views.some((view) =>
+    [view.section, queryTitleForView(view)].some((candidate) => queryBlockLabelKey(String(candidate ?? '')) === label),
+  );
+}
+
+function nativeTemplateSectionLines(
+  lines: OutlineLine[],
+  views: import('../registry/types').ViewDefinition[],
+): OutlineLine[] {
+  const out: OutlineLine[] = [];
+  let skipChildrenOfLevel: number | null = null;
+  for (const line of lines) {
+    if (skipChildrenOfLevel != null) {
+      if (line.level > skipChildrenOfLevel) continue;
+      skipChildrenOfLevel = null;
+    }
+    if (line.level === 1 && (isManagedPageSectionHeading(line.content) || lineMatchesView(line, views))) {
+      skipChildrenOfLevel = line.level;
+      continue;
+    }
+    out.push(line);
+  }
+  return out;
+}
+
+function groupedTemplateOutlineLines(t: RegistryTemplate): OutlineLine[] {
+  const displayName = templateNameFromRegistry(t);
+  const views = viewDefinitionsSafe(t);
+  const bodyLines = parseTemplateOutline(safeMarkdownRefs(String(t.body ?? '').trim()));
+  const nativeLines = nativeTemplateSectionLines(splitTemplateSections(bodyLines), views);
+  const lines: OutlineLine[] = [{ level: 0, content: displayName }];
+  for (const heading of PAGE_SECTION_HEADING_ORDER) {
+    lines.push({ level: 1, content: heading });
+    if (heading !== PAGE_SECTION_HEADINGS.nativeSections) continue;
+    for (const line of nativeLines) {
+      lines.push({ ...line, level: Math.max(2, line.level + 1) });
+    }
+  }
+  return lines;
+}
+
 export function outlineToBatchBlock(lines: OutlineLine[]): BatchBlock | null {
   if (!lines.length) return null;
   const root: BatchBlock = { content: lines[0].content, children: [] };
@@ -224,48 +274,36 @@ function batchChildMatchesView(child: BatchBlock, view: import('../registry/type
   return [view.section, queryTitleForView(view)].some((candidate) => queryBlockLabelKey(String(candidate ?? '')) === label);
 }
 
+function ensureBatchChild(parent: BatchBlock, content: string): BatchBlock {
+  if (!parent.children) parent.children = [];
+  const existing = parent.children.find((child) => queryBlockLabelKey(child.content) === queryBlockLabelKey(content));
+  if (existing) {
+    if (!existing.children) existing.children = [];
+    return existing;
+  }
+  const child: BatchBlock = { content, children: [] };
+  parent.children.push(child);
+  return child;
+}
+
+async function batchBlockForView(view: import('../registry/types').ViewDefinition): Promise<BatchBlock | null> {
+  const queryContent = await queryContentForView(view);
+  if (!queryContent) return null;
+  const qTitle = queryTitleForView(view);
+  const isDb = await isDbGraph();
+  return {
+    content: isDb && queryContent.startsWith('{') ? qTitle : `${qTitle}\n#Query ${simpleQueryForView(view)}`,
+  };
+}
+
 async function injectQueriesIntoBatch(batch: BatchBlock, t: RegistryTemplate): Promise<BatchBlock> {
   const views = viewDefinitionsSafe(t);
-  const viewBySection = new Map<string, (typeof views)[number]>();
+  for (const heading of QUERY_PAGE_SECTION_HEADINGS) ensureBatchChild(batch, heading);
   for (const view of views) {
-    const section = String(view.section ?? '').trim();
-    if (section && !viewBySection.has(section)) viewBySection.set(section, view);
-  }
-
-  const visit = async (node: BatchBlock): Promise<void> => {
-    const section = sectionNameFromLine(node.content);
-    if (section) {
-      const view = viewBySection.get(section);
-      const queryContent = view ? await queryContentForView(view) : null;
-      if (queryContent) {
-        const qTitle = queryTitleForView(view);
-        const isDb = await isDbGraph();
-        if (isDb && queryContent.startsWith('{')) {
-          // For DB: replace section name with the title query at this indent level (level 0).
-          // No EDN in batch to avoid text.
-          // Sync will configure the structure on the titled block.
-          node.content = qTitle;
-          node.children = node.children?.filter(c => !isQueryLikeContent(c.content)) ?? [];
-        } else {
-          node.children.unshift({ content: `${qTitle}\n#Query ${simpleQueryForView(view)}` });
-        }
-      }
-    }
-    for (const child of node.children ?? []) await visit(child);
-  };
-
-  await visit(batch);
-
-  if (!batch.children) batch.children = [];
-  for (const view of views) {
-    if (batch.children.some((child) => batchChildMatchesView(child, view))) continue;
-    const queryContent = await queryContentForView(view);
-    if (!queryContent) continue;
-    const qTitle = queryTitleForView(view);
-    const isDb = await isDbGraph();
-    batch.children.push({
-      content: isDb && queryContent.startsWith('{') ? qTitle : `${qTitle}\n#Query ${simpleQueryForView(view)}`,
-    });
+    const group = ensureBatchChild(batch, pageSectionHeadingForView(view));
+    if (group.children?.some((child) => batchChildMatchesView(child, view))) continue;
+    const queryBlock = await batchBlockForView(view);
+    if (queryBlock) group.children?.push(queryBlock);
   }
   return batch;
 }
@@ -279,13 +317,7 @@ function rootContentWithMarker(displayName: string, markerId: string): string {
 }
 
 async function buildEnrichedTemplateBatch(t: RegistryTemplate): Promise<BatchBlock | null> {
-  const displayName = templateNameFromRegistry(t);
-  const bodyLines = parseTemplateOutline(safeMarkdownRefs(String(t.body ?? '').trim()));
-  if (!bodyLines.length) return null;
-
-  // Props are set via upsert in syncTemplateStructure (using RegistryObject), not as visible text in batch.
-  const sectionLines = splitTemplateSections(bodyLines);
-  const batch = outlineToBatchBlock([{ level: 0, content: displayName }, ...sectionLines]);
+  const batch = outlineToBatchBlock(groupedTemplateOutlineLines(t));
   if (!batch) return null;
   return await injectQueriesIntoBatch(batch, t);
 }
@@ -368,6 +400,96 @@ async function insertChildBlock(
   }
 }
 
+function childTitleMatches(child: any, title: string): boolean {
+  return queryBlockLabelKey(String(child?.content ?? child?.title ?? '')) === queryBlockLabelKey(title);
+}
+
+function templateDescendants(block: any): any[] {
+  const out: any[] = [];
+  const visit = (node: any) => {
+    for (const child of node?.children ?? []) {
+      out.push(child);
+      visit(child);
+    }
+  };
+  visit(block);
+  return out;
+}
+
+type TemplateViewBlock = { block: any; heading: string | null };
+
+function templateViewBlocks(block: any, view: import('../registry/types').ViewDefinition): TemplateViewBlock[] {
+  const out: TemplateViewBlock[] = [];
+  const visit = (node: any, heading: string | null) => {
+    for (const child of node?.children ?? []) {
+      const title = String(child?.content ?? child?.title ?? '');
+      const nextHeading = isManagedPageSectionHeading(title) ? title : heading;
+      if (templateChildMatchesView(child, view)) out.push({ block: child, heading });
+      visit(child, nextHeading);
+    }
+  };
+  visit(block, null);
+  return out;
+}
+
+function templateContainsViewUnderHeading(
+  block: any,
+  view: import('../registry/types').ViewDefinition,
+  heading: string,
+): boolean {
+  return templateViewBlocks(block, view).some((entry) => queryBlockLabelKey(entry.heading ?? '') === queryBlockLabelKey(heading));
+}
+
+async function ensureTemplateHeadingBlock(
+  result: Result,
+  rootBlockId: string,
+  displayName: string,
+  heading: string,
+): Promise<string | null> {
+  const current = await logseq.Editor.getBlock(rootBlockId, { includeChildren: true }).catch(() => null);
+  const existing = (current?.children ?? []).find((child: any) => childTitleMatches(child, heading));
+  const existingId = blockId(existing);
+  if (existingId) return existingId;
+  return insertChildBlock(result, rootBlockId, heading, `INSERT template section heading: ${displayName} / ${heading}`);
+}
+
+async function ensureTemplateSectionHeadings(
+  result: Result,
+  rootBlockId: string,
+  displayName: string,
+): Promise<void> {
+  for (const heading of PAGE_SECTION_HEADING_ORDER) {
+    await ensureTemplateHeadingBlock(result, rootBlockId, displayName, heading);
+  }
+}
+
+function templateBlockHasMeaningfulChildren(block: any): boolean {
+  for (const child of block?.children ?? []) {
+    const content = String(child?.content ?? child?.title ?? '').trim();
+    if (content && content !== '-') return true;
+    if (templateBlockHasMeaningfulChildren(child)) return true;
+  }
+  return false;
+}
+
+async function removeObsoleteTemplateHeadings(
+  result: Result,
+  rootBlockId: string,
+  displayName: string,
+): Promise<void> {
+  if (!logseq.Editor.removeBlock) return;
+  const current = await logseq.Editor.getBlock(rootBlockId, { includeChildren: true }).catch(() => null);
+  for (const child of current?.children ?? []) {
+    const title = String(child?.content ?? child?.title ?? '');
+    if (!isObsoletePageSectionHeading(title)) continue;
+    if (templateBlockHasMeaningfulChildren(child)) {
+      result.notes.push(`Kept obsolete template heading ${displayName} / ${title.trim()} because it contains content.`);
+      continue;
+    }
+    await removeTemplateBlock(result, child, `REMOVE obsolete template heading: ${displayName} / ${title.trim()}`);
+  }
+}
+
 function templateChildMatchesView(child: any, view: import('../registry/types').ViewDefinition): boolean {
   const section = sectionNameFromLine(String(child?.content ?? ''));
   const label = queryBlockLabelKey(section || String(child?.content ?? ''));
@@ -428,9 +550,10 @@ async function ensureTemplateQueryBlock(
   const qTitle = queryTitleForView(view);
   const isDb = await isDbGraph();
   const content = isDb && queryContent.startsWith('{') ? qTitle : `${qTitle}\n#Query ${simpleQueryForView(view)}`;
+  const groupId = await ensureTemplateHeadingBlock(result, rootBlockId, displayName, pageSectionHeadingForView(view));
   const insertedId = await insertChildBlock(
     result,
-    rootBlockId,
+    groupId ?? rootBlockId,
     content,
     `INSERT template query block: ${displayName} / ${qTitle}`,
   );
@@ -450,9 +573,14 @@ async function dedupeTemplateQueryBlocks(
   if (!logseq.Editor.removeBlock) return current;
 
   for (const view of views) {
-    const matches = (current?.children ?? []).filter((child: any) => templateChildMatchesView(child, view));
+    const targetHeading = pageSectionHeadingForView(view);
+    const matches = templateViewBlocks(current, view).sort((a, b) => {
+      const aGrouped = queryBlockLabelKey(a.heading ?? '') === queryBlockLabelKey(targetHeading) ? 0 : 1;
+      const bGrouped = queryBlockLabelKey(b.heading ?? '') === queryBlockLabelKey(targetHeading) ? 0 : 1;
+      return aGrouped - bGrouped;
+    });
     if (matches.length <= 1) continue;
-    for (const duplicate of matches.slice(1)) {
+    for (const duplicate of matches.slice(1).map((entry) => entry.block)) {
       await removeTemplateBlock(
         result,
         duplicate,
@@ -465,6 +593,7 @@ async function dedupeTemplateQueryBlocks(
   const currentSources = currentTemplateSourceTags(views);
   if (!currentSources.size) return current;
   for (const child of current?.children ?? []) {
+    if (isManagedPageSectionHeading(String(child?.content ?? child?.title ?? ''))) continue;
     if (templateChildMatchesAnyView(child, views)) continue;
     if (await isQueryLikeBlockAsync(child)) {
       if (await templateQueryUsesCurrentSource(child, currentSources)) {
@@ -513,21 +642,26 @@ async function syncTemplateStructure(result: Result, rootBlockId: string, t: Reg
     await upsertTemplateProperty(result, rootBlockId, prop.key, prop.value, displayName);
   }
 
+  await removeObsoleteTemplateHeadings(result, rootBlockId, displayName);
+  await ensureTemplateSectionHeadings(result, rootBlockId, displayName);
+
   const refreshed = await logseq.Editor.getBlock(rootBlockId, { includeChildren: true });
   const views = viewDefinitionsSafe(t);
   const viewBySection = new Map(views.map((view) => [String(view.section ?? '').trim(), view]));
   const findViewBySectionOrTitle = (name: string) => {
     let view = viewBySection.get(name);
     if (view) return view;
+    const label = queryBlockLabelKey(name);
     for (const v of views) {
       const title = queryTitleForView(v);
-      if (title === name || v.section === name) return v;
+      if (title === name || v.section === name || [title, v.section].some((candidate) => queryBlockLabelKey(String(candidate ?? '')) === label)) return v;
     }
     return undefined;
   };
 
-  for (const sectionBlock of refreshed?.children ?? []) {
+  for (const sectionBlock of templateDescendants(refreshed)) {
     const sectionName = sectionNameFromLine(String(sectionBlock?.content ?? ''));
+    if (isManagedPageSectionHeading(sectionName || String(sectionBlock?.content ?? ''))) continue;
     if (!sectionName) continue;
     const view = findViewBySectionOrTitle(sectionName);
     const queryContent = view ? await queryContentForView(view) : null;
@@ -569,16 +703,18 @@ async function syncTemplateStructure(result: Result, rootBlockId: string, t: Reg
 
   const afterExisting = await dedupeTemplateQueryBlocks(result, rootBlockId, displayName, views);
   for (const view of views) {
-    if ((afterExisting?.children ?? []).some((child: any) => templateChildMatchesView(child, view))) continue;
+    if (templateContainsViewUnderHeading(afterExisting, view, pageSectionHeadingForView(view))) continue;
     await ensureTemplateQueryBlock(result, rootBlockId, displayName, view);
   }
+  await dedupeTemplateQueryBlocks(result, rootBlockId, displayName, views);
 
   // Final pass: ensure all advanced queries in the template have full structure (tags, display-type :code, proper EDN with corrections).
   const isDbFinal = await isDbGraph();
   if (isDbFinal) {
     const refreshedFinal = await logseq.Editor.getBlock(rootBlockId, { includeChildren: true });
-    for (const sBlock of refreshedFinal?.children ?? []) {
+    for (const sBlock of templateDescendants(refreshedFinal)) {
       const sec = sectionNameFromLine(String(sBlock?.content ?? ''));
+      if (isManagedPageSectionHeading(sec || String(sBlock?.content ?? ''))) continue;
       const v = findViewBySectionOrTitle(sec);
       const qC = v ? await queryContentForView(v) : null;
       if (qC && qC.startsWith('{')) {

@@ -42,6 +42,7 @@ import {
   repairLinkedParentDashboards,
 } from './repair-dashboard';
 import { applyIncomingSourceTagsForPage } from './repair-source-tags';
+import { syncInverseRelationshipProperties } from './repair-inverse-relationships';
 import { materializeTemplateSections } from './repair-template';
 import { cleanForeignPluginPropertyCopies, ensurePlaceholderPagesForNodeValue, isForeignPluginRegistryPropertyKey, isPlaceholderNodeDefault, readDatascriptUserPropertyValue } from './repair-user-properties';
 import { pageLooksMaterializable, recentTaggedLssPageFallback } from './repair-current-page';
@@ -1111,6 +1112,11 @@ async function repairPageCore(
       }
     }
   }
+  let inverseSynced = 0;
+  if (inferredType) {
+    const obj = objectByName(inferredType);
+    if (obj) inverseSynced = await syncInverseRelationshipProperties(result, pageName, obj, props);
+  }
   await cleanForeignPluginPropertyCopies(result, pageName, pageBlockId, new Set([...schemaProps].map(canonicalPropertyKey)));
 
   // Clean schema prop lines from content for LSS objects/blocks so canonical values live only as page properties.
@@ -1178,7 +1184,7 @@ async function repairPageCore(
   );
 
   result.notes.push(
-    `Repair ${label}: ${pageName}; promoted ${resolvedTags.size} tag(s), ${props.size} property candidate(s), inserted ${materializedSections} template section(s), fixed ${phantomTagsFixed} phantom (#tag) block(s), concretized ${concretized} query block(s), repaired ${repaired} dashboard query block(s), repaired ${linked} linked parent dashboard query block(s).`,
+    `Repair ${label}: ${pageName}; promoted ${resolvedTags.size} tag(s), ${props.size} property candidate(s), synced ${inverseSynced} inverse relationship(s), inserted ${materializedSections} template section(s), fixed ${phantomTagsFixed} phantom (#tag) block(s), concretized ${concretized} query block(s), repaired ${repaired} dashboard query block(s), repaired ${linked} linked parent dashboard query block(s).`,
   );
 
   return { objectType, repaired, linked, resolvedTags, props };
@@ -1407,6 +1413,7 @@ async function repairSpecificPage(
   }
 
   enterRepairSession();
+  markRepairCooldown(pageName);
   try {
     let blocks = await getBlocks(pageName);
     if (!blocks?.length && safePageName(pageName) !== pageName) {

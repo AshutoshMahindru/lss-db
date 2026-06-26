@@ -409,6 +409,13 @@ if (
   fail('auto-repair must be enabled by default and retry on the current page after plugin load');
 }
 if (
+  !autoRepairSource.includes('if (isRepairSessionActive())') ||
+  !repairSource.includes('enterRepairSession();') ||
+  !repairSource.includes('markRepairCooldown(pageName);')
+) {
+  fail('manual materialise must suppress pending auto-repair before editing entity/query blocks');
+}
+if (
   !registerSource.includes("register('lss: materialise page', repairCurrentPage)") ||
   registerSource.includes("registerPalette('lss-materialise-page', 'LSS: Materialise Page', repairCurrentPage)")
 ) {
@@ -611,7 +618,7 @@ for (const required of [
   'repairLinkedParentDashboards',
   'forceCreateQueryChild',
   'Dashboard query dedupe:',
-  'REBUILT advanced query from scratch',
+  'keeping existing query block for non-destructive retry',
 ]) {
   if (!repairDashboardSource.includes(required)) fail(`repair-dashboard module missing responsibility: ${required}`);
 }
@@ -757,6 +764,9 @@ for (const required of [
   'dbAdvancedQueryBlockNeedsStructureRepair',
   'window.__lssConfigureDbAdvancedQuery',
   'upsertKeywordBlockPropertyHost',
+  'QUERY_CREATED_FROM_PROPERTY_KEY',
+  'childCreatedFromQueryProperty',
+  'upsertQueryChildCreatedFromPropertyHost',
   'readAnyProperty(props, \'query\', QUERY_PROPERTY_KEY)',
   'readBlockDatascriptProperty(parentId, QUERY_PROPERTY_KEY)',
 ]) {
@@ -828,6 +838,12 @@ for (const [label, source, required] of [
       'viewTitleKey',
       'mergeViewFilters',
       'includesCurrentPageFilterProps',
+      'PAGE_SECTION_HEADINGS',
+      'PAGE_SECTION_HEADING_ORDER',
+      'QUERY_PAGE_SECTION_HEADINGS',
+      'pageSectionHeadingForView',
+      'OBSOLETE_PAGE_SECTION_HEADINGS',
+      'isObsoletePageSectionHeading',
       "'parent-child-sibling'",
       'pushViews(views, contextualEntityTemplateViews(template))',
     ],
@@ -843,8 +859,21 @@ for (const required of [
   'REMOVE duplicate template query block',
   'INSERT template query block',
   'batchChildMatchesView',
+  'groupedTemplateOutlineLines',
+  'ensureTemplateHeadingBlock',
+  'pageSectionHeadingForView(view)',
+  'removeObsoleteTemplateHeadings',
 ]) {
   if (!templatesSource.includes(required)) fail(`native templates must append generated query blocks: ${required}`);
+}
+for (const required of [
+  'PAGE_SECTION_HEADING_ORDER',
+  'PAGE_SECTION_HEADINGS.nativeSections',
+  'ensureRootHeading',
+  'removeObsoleteRootHeadings',
+  'INSERT page section heading',
+]) {
+  if (!repairTemplateSource.includes(required)) fail(`materialise page must insert grouped page headings: ${required}`);
 }
 for (const [label, source, required] of [
   [
@@ -862,6 +891,15 @@ for (const [label, source, required] of [
       'Linked parent repair:',
       'removeDuplicateDashboardQueryBlocksByTitle',
       'managedQueryTitleCandidate',
+      'ensureRootHeadingBlock',
+      'pageSectionHeadingForView(view)',
+      'queryCandidateUnderHeading',
+      'queryCandidatesUnderHeading',
+      'walkBlocksWithManagedHeading',
+      'removeDuplicateManagedHeadingBlocks',
+      'freshInserted',
+      'for (const block of walkBlocks(blocks ?? []))',
+      'isManagedPageSectionHeading',
       'normalizedQueryTitle(queryTitleForView(view))',
       'const targetHints: Array<string | null> = targets.length ? targets : [null]',
       'targetHint ?? inferObjectType',
@@ -870,7 +908,7 @@ for (const [label, source, required] of [
   [
     'dashboard current-page text fallback',
     queryBuildersSource,
-    ['currentPageTextFallbackValues', 'queryDbCurrentPagePropertyExpr', 'safePageName(raw).toUpperCase()'],
+    ['currentPageTextFallbackValues', 'currentPageNodeFallbackValues', 'currentPageId', 'queryDbCurrentPagePropertyExpr'],
   ],
   [
     'db-aware audit',

@@ -493,6 +493,7 @@ export async function diagnoseCurrentPage(r: Result): Promise<void> {
         lines.push(`query-block-has-query-property:: ${struct.hasQueryProperty ? 'yes' : 'no'}`);
         lines.push(`query-block-has-code-child:: ${struct.hasCodeChild ? 'yes' : 'no'}`);
         lines.push(`query-child-title-has-edn:: ${struct.childTitleHasEdn ? 'yes' : 'no'}`);
+        lines.push(`query-child-created-from-query:: ${struct.childCreatedFromQueryProperty ? 'yes' : 'no'}`);
         lines.push(`query-child-display-type-code:: ${struct.childDisplayTypeIsCode ? 'yes' : 'no'}`);
         lines.push(`query-child-display-type-raw:: ${await readQueryChildDisplayTypeRaw(queryBlock)}`);
 
@@ -539,6 +540,11 @@ export async function diagnoseCurrentPage(r: Result): Promise<void> {
         if (!struct.childDisplayTypeIsCode) {
           lines.push(
             '- UI-BLOCKER: code child needs logseq.property.node/display-type = :code (cljs keyword); plugin IPC cannot set this — run lss: materialise page after reload (host inline upsert applies :code without manual /Advanced Query)',
+          );
+        }
+        if (!struct.childCreatedFromQueryProperty) {
+          lines.push(
+            '- UI-BLOCKER: code child is visible because it is not marked as the query property child; reload plugin, then run lss: materialise page.',
           );
         }
         lines.push(

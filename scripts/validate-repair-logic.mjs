@@ -201,6 +201,7 @@ function dbAdvancedQueryBlockNeedsStructureRepair(struct) {
     !struct.hasQueryProperty ||
     !struct.hasCodeChild ||
     !struct.childTitleHasEdn ||
+    !struct.childCreatedFromQueryProperty ||
     !struct.childDisplayTypeIsCode ||
     struct.rawEdnInParentContent ||
     struct.parentCollapsed
@@ -506,6 +507,7 @@ const tests = [
       hasCodeChild: true,
       rawEdnInParentContent: false,
       queryEdnInChild: true,
+      childCreatedFromQueryProperty: true,
       childDisplayTypeIsCode: true,
       childTitleHasEdn: true,
       parentCollapsed: false,
@@ -518,6 +520,7 @@ const tests = [
       ['hasQueryProperty', false],
       ['hasCodeChild', false],
       ['childTitleHasEdn', false],
+      ['childCreatedFromQueryProperty', false],
       ['childDisplayTypeIsCode', false],
       ['rawEdnInParentContent', true],
       ['parentCollapsed', true],
@@ -605,8 +608,8 @@ const tests = [
     }
   },
   () => {
-    function hasCodeChildFromParts(queryEdnInChild, langIsClojure, displayIsCodeKeyword) {
-      return queryEdnInChild && displayIsCodeKeyword && langIsClojure;
+    function hasCodeChildFromParts(queryEdnInChild, childCreatedFromQueryProperty, langIsClojure, displayIsCodeKeyword) {
+      return queryEdnInChild && childCreatedFromQueryProperty && displayIsCodeKeyword && langIsClojure;
     }
     function dbAdvancedQueryBlockNeedsStructureRepair(struct) {
       return (
@@ -614,16 +617,20 @@ const tests = [
         !struct.hasQueryProperty ||
         !struct.hasCodeChild ||
         !struct.childTitleHasEdn ||
+        !struct.childCreatedFromQueryProperty ||
         !struct.childDisplayTypeIsCode ||
         struct.rawEdnInParentContent ||
         struct.parentCollapsed
       );
     }
-    if (!hasCodeChildFromParts(true, true, true)) {
-      throw new Error('EDN child with :code display-type and clojure lang should count as code child');
+    if (!hasCodeChildFromParts(true, true, true, true)) {
+      throw new Error('EDN child with query property metadata, :code display-type and clojure lang should count as code child');
     }
-    if (hasCodeChildFromParts(true, true, false)) {
+    if (hasCodeChildFromParts(true, true, true, false)) {
       throw new Error('EDN child without :code display-type must not count as code child');
+    }
+    if (hasCodeChildFromParts(true, false, true, true)) {
+      throw new Error('EDN child without created-from-property=query must not count as code child');
     }
     if (
       dbAdvancedQueryBlockNeedsStructureRepair({
@@ -633,6 +640,7 @@ const tests = [
         rawEdnInParentContent: false,
         queryEdnInChild: true,
         childTitleHasEdn: true,
+        childCreatedFromQueryProperty: true,
         childDisplayTypeIsCode: true,
         parentCollapsed: false,
       })
@@ -646,6 +654,7 @@ const tests = [
         hasCodeChild: false,
         rawEdnInParentContent: true,
         queryEdnInChild: false,
+        childCreatedFromQueryProperty: false,
       })
     ) {
       throw new Error('raw EDN parent without Query structure should need structure repair');
@@ -749,6 +758,7 @@ const tests = [
         rawEdnInParentContent: false,
         queryEdnInChild: true,
         childTitleHasEdn: true,
+        childCreatedFromQueryProperty: true,
         childDisplayTypeIsCode: true,
         parentCollapsed: false,
       },
@@ -763,6 +773,7 @@ const tests = [
         rawEdnInParentContent: true,
         queryEdnInChild: false,
         childTitleHasEdn: false,
+        childCreatedFromQueryProperty: false,
         childDisplayTypeIsCode: false,
         parentCollapsed: true,
       },
