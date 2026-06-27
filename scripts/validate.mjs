@@ -416,10 +416,14 @@ if (
   fail('manual materialise must suppress pending auto-repair before editing entity/query blocks');
 }
 if (
-  !registerSource.includes("register('lss: materialise page', repairCurrentPage)") ||
+  !registerSource.includes("'lss: materialise page'") ||
+  !registerSource.includes("'lss: materialise'") ||
+  !registerSource.includes("'lss materialise page'") ||
+  !registerSource.includes("'lss materialise'") ||
+  !registerSource.includes("'LSS: Materialise Page'") ||
   registerSource.includes("registerPalette('lss-materialise-page', 'LSS: Materialise Page', repairCurrentPage)")
 ) {
-  fail('materialise page must have exactly one slash command and no duplicate command-palette registration');
+  fail('materialise page must keep its canonical slash command and British-spelling aliases, with no duplicate command-palette registration');
 }
 for (const forbidden of [
   'lss: materialize page',
