@@ -33,6 +33,13 @@ import { forceCreateQueryChild } from './advanced-query-blocks';
 type InferObjectType = (pageName: string, blocks: any[]) => string | null;
 type RepairParentRefs = (value: string) => string[];
 type ResolveVisibleNodeToken = (result: Result, token: string) => Promise<string>;
+export type DashboardRepairOptions = {
+  maxViews?: number;
+  pageSectionHeadings?: string[];
+  aggregatePageSectionHeadings?: string[];
+};
+
+type DashboardView = ReturnType<typeof viewDefinitionsSafe>[number];
 
 function findSectionBlocks(blocks: any[]): Map<string, any> {
   const map = new Map<string, any>();
@@ -76,6 +83,64 @@ function normalizedQueryTitle(value: string): string {
     .toLowerCase()
     .replace(/[-_]+/g, ' ')
     .replace(/\s+/g, ' ');
+}
+
+function normalizedHeading(value: string): string {
+  return normalizedQueryTitle(value);
+}
+
+function viewMatchesPageSectionHeading(view: DashboardView, headings: Set<string>): boolean {
+  if (!headings.size) return true;
+  return headings.has(normalizedHeading(pageSectionHeadingForView(view)));
+}
+
+function aggregateViewLabel(heading: string): string {
+  const key = normalizedHeading(heading);
+  if (key === 'forms') return 'Forms';
+  if (key === 'reviews') return 'Reviews';
+  if (key === 'dates') return 'Dates';
+  if (key === 'related entities') return 'Related entities';
+  if (key === 'generic entities') return 'Generic entities';
+  return heading
+    .toLowerCase()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function aggregatePageSectionViews(views: DashboardView[], headings: Set<string>): DashboardView[] {
+  if (!headings.size) return views;
+  const groups = new Map<string, { heading: string; views: DashboardView[] }>();
+  const passthrough: DashboardView[] = [];
+  for (const view of views) {
+    const heading = pageSectionHeadingForView(view);
+    const key = normalizedHeading(heading);
+    if (!headings.has(key)) {
+      passthrough.push(view);
+      continue;
+    }
+    const group = groups.get(key) ?? { heading, views: [] };
+    group.views.push(view);
+    groups.set(key, group);
+  }
+  const aggregated: DashboardView[] = [];
+  for (const [key, group] of groups) {
+    const sourceTags = [...new Set(group.views.flatMap((view) => sourceTagsForView(view)))];
+    const filterProps = [...new Set(group.views.flatMap((view) => (view.filters ?? []).flatMap(filterProps)))];
+    if (!sourceTags.length || !filterProps.length) continue;
+    const label = aggregateViewLabel(group.heading);
+    aggregated.push({
+      id: `LSS-MATERIALISE-${key.replace(/[^a-z0-9]+/g, '-').toUpperCase()}`,
+      queryTitle: label,
+      title: label,
+      section: label,
+      sourceTags,
+      filters: [{ propertyAny: filterProps, operator: 'includesCurrentPage' }],
+      viewType: 'table',
+      nativeQueryStatus: 'template-query-block',
+      exportPolicy: 'inherit',
+      queryIntent: `Aggregate ${label.toLowerCase()} related to current page`,
+    });
+  }
+  return [...passthrough, ...aggregated];
 }
 
 function blockTitle(block: any): string {
@@ -685,6 +750,7 @@ export async function repairDashboardQueries(
   typeHint: string | null = null,
   sectionsFilter: Set<string> | null = null,
   inferObjectType: InferObjectType,
+  options: DashboardRepairOptions = {},
 ): Promise<number> {
   const objectType = typeHint || inferObjectType(pageName, blocks);
   if (!objectType) {
@@ -696,7 +762,20 @@ export async function repairDashboardQueries(
     result.notes.push(`Dashboard query repair: no template definition found for inferred type ${objectType}.`);
     return 0;
   }
-  const views = viewDefinitionsSafe(template);
+  if (options.maxViews === 0) {
+    result.notes.push(
+      `Dashboard query repair: skipped for ${objectType}; lss: materialise page avoids native query UI repair stalls.`,
+    );
+    return 0;
+  }
+  const pageSectionHeadings = new Set((options.pageSectionHeadings ?? []).map(normalizedHeading).filter(Boolean));
+  const aggregateHeadings = new Set((options.aggregatePageSectionHeadings ?? []).map(normalizedHeading).filter(Boolean));
+  let views = viewDefinitionsSafe(template).filter((view) => viewMatchesPageSectionHeading(view, pageSectionHeadings));
+  views = aggregatePageSectionViews(views, aggregateHeadings);
+  if (!views.length) {
+    result.notes.push(`Dashboard query repair: no ${objectType} query views matched bounded materialise options.`);
+    return 0;
+  }
   let freshBlocks = await getBlocks(pageName);
   if (!freshBlocks?.length && safePageName(pageName) !== pageName) {
     freshBlocks = await getBlocks(safePageName(pageName));
@@ -719,10 +798,18 @@ export async function repairDashboardQueries(
   const cleanedLegacySectionIds = new Set<string>();
   const ensuredHeadingIds = new Map<string, string | null>();
 
+  let repairedViews = 0;
   for (const view of views) {
     const section = String(view.section ?? '').trim();
     if (!section) continue;
     if (sectionsFilter && !sectionsFilter.has(section)) continue;
+    if (options.maxViews != null && repairedViews >= options.maxViews) {
+      result.notes.push(
+        `Dashboard query repair: deferred remaining ${objectType} query sections after ${options.maxViews} bounded materialise update(s).`,
+      );
+      break;
+    }
+    repairedViews++;
     let sectionBlock = sectionBlocks.get(section);
     const queryContent = await dashboardQueryBlockForViewAsync(view, pageName, pageEntity);
     if (!queryContent) continue;
@@ -826,6 +913,12 @@ export async function repairDashboardQueries(
         if (sectionId) cleanedLegacySectionIds.add(sectionId);
       }
     }
+  }
+  if (options.maxViews != null) {
+    result.notes.push(
+      `Dashboard query repair: bounded run for ${objectType}; changed/inserted ${changed} query block(s), checked ${checked} existing query block(s).`,
+    );
+    return changed;
   }
 
   const afterRepairBlocks = await refreshPageBlocks(pageName, blocks);

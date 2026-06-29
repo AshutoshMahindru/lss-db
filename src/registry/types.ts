@@ -57,6 +57,7 @@ export interface RegistryRelationship {
 export interface ViewDefinition {
   id?: string;
   title?: string;
+  queryTitle?: string;
   name?: string;
   dashboard?: string;
   section?: string;

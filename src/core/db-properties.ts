@@ -697,6 +697,9 @@ function pageEntityIdFromRecord(
     page[':db/id'] ??
     page['db/id'];
   if (id == null) return null;
+  if (/^\d+$/.test(String(requestedName ?? '').trim()) && String(id) === String(requestedName).trim()) {
+    return id as string | number;
+  }
   // Node properties must point to a page entity. Some Logseq APIs can return
   // property value/block entities for ambiguous names; those have ids but no
   // visible page title and must not be used as node property targets.
@@ -708,6 +711,7 @@ export async function resolveNodePropertyIds(value: string): Promise<Array<strin
   const ids: Array<string | number> = [];
   for (const name of pageNamesFromValue(value)) {
     const candidates = [
+      /^\d+$/.test(name) ? await resolvePageFromIdentity(name).catch(() => null) : null,
       await getPageByExactTitle(name),
       await getPage(name),
       await getPage(safePageName(name)),

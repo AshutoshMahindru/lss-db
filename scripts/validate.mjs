@@ -8,6 +8,7 @@ const auditSource = fs.readFileSync('src/modules/audit.ts', 'utf8');
 const repairSource = fs.readFileSync('src/modules/repair.ts', 'utf8');
 const repairNativePropertiesSource = fs.readFileSync('src/modules/repair-native-properties.ts', 'utf8');
 const repairUserPropertiesSource = fs.readFileSync('src/modules/repair-user-properties.ts', 'utf8');
+const repairPageResolutionSource = fs.readFileSync('src/modules/repair-page-resolution.ts', 'utf8');
 const repairTemplateSource = fs.readFileSync('src/modules/repair-template.ts', 'utf8');
 const templatesSource = fs.readFileSync('src/modules/templates.ts', 'utf8');
 const contractsSource = fs.readFileSync('src/modules/contracts.ts', 'utf8');
@@ -29,6 +30,8 @@ const autoRepairSource = fs.readFileSync('src/modules/auto-repair.ts', 'utf8');
 const registerSource = fs.readFileSync('src/commands/register.ts', 'utf8');
 const registryCreateSource = fs.readFileSync('src/commands/registry-create.ts', 'utf8');
 const dbPropertiesSource = fs.readFileSync('src/core/db-properties.ts', 'utf8');
+const editorSource = fs.readFileSync('src/core/editor.ts', 'utf8');
+const runnerSource = fs.readFileSync('src/core/runner.ts', 'utf8');
 const registryIndexSource = fs.readFileSync('src/registry/index.ts', 'utf8');
 const setupStep10Source = setupSource.slice(
   setupSource.indexOf('export async function step10db'),
@@ -416,14 +419,63 @@ if (
   fail('manual materialise must suppress pending auto-repair before editing entity/query blocks');
 }
 if (
-  !registerSource.includes("'lss: materialise page'") ||
-  !registerSource.includes("'lss: materialise'") ||
-  !registerSource.includes("'lss materialise page'") ||
-  !registerSource.includes("'lss materialise'") ||
-  !registerSource.includes("'LSS: Materialise Page'") ||
-  registerSource.includes("registerPalette('lss-materialise-page', 'LSS: Materialise Page', repairCurrentPage)")
+  !registerSource.includes("register('lss: materialise page', repairCurrentPage)") ||
+  !registerSource.includes("registerPalette('lss: materialise page', 'lss-materialise-page', repairCurrentPage)") ||
+  !registerSource.includes("registerPageMenu('lss: materialise page', repairCurrentPage)")
 ) {
-  fail('materialise page must keep its canonical slash command and British-spelling aliases, with no duplicate command-palette registration');
+  fail('materialise page must have one canonical slash command, one command-palette entry, and one page-menu entry');
+}
+if (
+  !registerSource.includes('(context) => run(label, fn, context)') ||
+  !runnerSource.includes('context?: CommandContext') ||
+  !editorSource.includes('currentPageFromCommandContext') ||
+  !editorSource.includes('commandContextIdentityCandidates') ||
+  !editorSource.includes('resolvePageByUuid') ||
+  !editorSource.includes('pageRouteMatch = token.match(/\\/page\\/([^/?#&]+)/i)') ||
+  !editorSource.includes('const datascriptPage = await blockPageRecord(token)') ||
+  !editorSource.includes('const directPage = await resolvePageByUuid(token)') ||
+  !editorSource.includes('return pageVisibleName(page) || null') ||
+  !repairSource.includes('currentPageName(context)')
+) {
+  fail('slash command context must flow into materialise current-page resolution');
+}
+if (
+  !runnerSource.includes('page: `LSS Reports/${slug}`') ||
+  !runnerSource.includes('appendBlockInPageVerified') ||
+  !runnerSource.includes('lss: materialise page invoked v${VERSION}') ||
+  !runnerSource.includes('runWithTimeout') ||
+  !runnerSource.includes('Command timed out after') ||
+  runnerSource.includes('writeStartedReport') ||
+  runnerSource.includes('bestEffortStartedReport') ||
+  runnerSource.includes('lss-report-started') ||
+  repairSource.includes('bestEffortStartedReport') ||
+  !editorSource.includes('ensureExactPage') ||
+  !editorSource.includes('appendBlockInPageVerified') ||
+  !editorSource.includes('resolvePageByDatascriptName') ||
+  !editorSource.includes('currentPageFromCurrentBlocks') ||
+  !editorSource.includes('getCurrentPageBlocksTree') ||
+  !editorSource.includes('INSERT block via page root') ||
+  !editorSource.includes('host?.location?.href') ||
+  editorSource.indexOf('const fromRoute = await currentPageFromRoute()') > editorSource.indexOf('const p = await logseq.Editor.getCurrentPage()')
+) {
+  fail('command runner/current-page resolver must use exact reports, verified writes, page-root fallback, route/current-block selection, and Datascript page lookup');
+}
+if (
+  !repairSource.includes('RELATIONSHIP_PROPERTIES.has(shortKey)) return String(id)') ||
+  !repairSource.includes('RELATIONSHIP_PROPERTIES.has(shortKey)) return raw') ||
+  !repairSource.includes('if (looksLikePageEntityId(name))') ||
+  !repairSource.includes('refs.push(name)') ||
+  !dbPropertiesSource.includes('String(id) === String(requestedName).trim()') ||
+  !dbPropertiesSource.includes("/^\\d+$/.test(name) ? await resolvePageFromIdentity(name)")
+) {
+  fail('relationship repair must preserve/resolve numeric DB node ids instead of fabricating wiki refs like [[1691]]');
+}
+if (
+  !advancedQueryBlocksSource.includes('async function readBlockEntity') ||
+  !advancedQueryBlocksSource.includes('[:find (pull ?b [*]) :in $ ?e :where [?b :db/id ?e]]') ||
+  !advancedQueryBlocksSource.includes('const child = await readBlockEntity(childId)')
+) {
+  fail('advanced query inspection must resolve numeric query child DB ids via Datascript, not only Editor.getBlock');
 }
 for (const forbidden of [
   'lss: materialize page',
@@ -513,6 +565,25 @@ if (
   !repairDashboardSource.includes('SKIP linked parent repair for placeholder')
 ) {
   fail('linked parent dashboard repair must skip controlled placeholder refs');
+}
+if (
+  !repairSource.includes('repairLinkedParents: false') ||
+  !repairSource.includes('lss: materialise page is scoped to the selected page')
+) {
+  fail('lss: materialise page must not cascade into linked parent dashboard repairs');
+}
+if (
+  !editorSource.includes('CurrentPageNameOptions') ||
+  !editorSource.includes('acceptedPageName') ||
+  !repairSource.includes('isProtectedMaterialiseCommandTarget') ||
+  !repairSource.includes('Materialise resolver skipped protected/control page') ||
+  !repairSource.includes('maxDashboardQueryViews: 2') ||
+  !repairSource.includes("dashboardQueryPageSectionHeadings: ['FORMS', 'REVIEWS']") ||
+  !repairSource.includes("aggregateDashboardQueryPageSectionHeadings: ['FORMS', 'REVIEWS']") ||
+  !repairDashboardSource.includes('aggregatePageSectionViews') ||
+  !repairDashboardSource.includes('pageSectionHeadings')
+) {
+  fail('lss: materialise page must skip report/control pages and use bounded aggregate Forms/Reviews query repair');
 }
 if (
   !repairSource.includes('const changed = await repairUpsertPageProperty') ||
@@ -629,14 +700,42 @@ for (const required of [
 for (const required of [
   'materializeTemplateSections',
   'templateSectionNames',
-  'appendBlockInPage',
+  'logseq.Editor.insertBlock(pageRootBlockId',
+  'logseq.Editor.appendBlockInPage(pageName, heading)',
+  'logseq.Editor.appendBlockInPage(pageName, section)',
   'pageRootBlockId',
-  'insertBlock(pageRootBlockId',
 ]) {
   if (!repairTemplateSource.includes(required)) fail(`repair-template module missing responsibility: ${required}`);
 }
+if (
+  repairTemplateSource.includes('insertBlockUnderParentVerified') ||
+  repairTemplateSource.includes('Logseq inserted outside expected parent') ||
+  repairTemplateSource.includes('removed unsafe block') ||
+  repairTemplateSource.includes('template section verification: missing required heading')
+) {
+  fail('materialise template writes must use Logseq insert/append plus readback, not strict parent verification');
+}
+if (
+  !repairTemplateSource.includes('refreshTargetPageBlocks') ||
+  !repairPageResolutionSource.includes('return blocks') ||
+  repairPageResolutionSource.includes('filterTopLevelBlocksForPage') ||
+  !repairSource.includes('blocks = await readRepairPageBlocks(pageName, page)')
+) {
+  fail('materialise must use unfiltered page block snapshots for template section readback');
+}
 if (!repairSource.includes('materializeTemplateSections')) {
   fail('materialise page must insert missing registry template sections before dashboard query repair');
+}
+if (
+  !repairSource.includes('defaultUntypedMaterialiseObjectType') ||
+  !repairSource.includes("'Venture'") ||
+  !repairSource.includes('explicit materialise on an ordinary untyped page') ||
+  !repairSource.includes('isProtectedMaterialisePage') ||
+  !repairPageResolutionSource.includes('NATIVE SECTIONS') ||
+  !repairPageResolutionSource.includes('RELATED ENTITIES') ||
+  !repairPageResolutionSource.includes('decoded.match(/\\/page\\/([^/?#&]+)/i)')
+) {
+  fail('materialise page must bootstrap ordinary untyped pages as Venture while protecting LSS control pages');
 }
 const currentReadMatch = repairSource.match(/async function readCurrentBlockProperty[\s\S]*?async function dbPropertyValueToRepairString/);
 if (!currentReadMatch || currentReadMatch[0].includes('isPluginOwnedRegistryPropertyKey(key) continue')) {

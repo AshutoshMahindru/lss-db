@@ -33,6 +33,8 @@ function ednValue(value: unknown): string {
 }
 
 export function queryTitleForView(view: ViewDefinition): string {
+  const explicit = String(view.queryTitle ?? '').trim();
+  if (explicit) return explicit;
   return String(normTagList(view.sourceTags)[0] ?? view.section ?? view.title ?? 'Query').trim() || 'Query';
 }
 

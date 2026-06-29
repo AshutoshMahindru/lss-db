@@ -206,12 +206,37 @@ async function readBlockDatascriptProperty(
   }
 }
 
-async function resolveBlockIdentity(blockRef: string | number): Promise<string | number> {
+async function readBlockEntity(blockRef: string | number): Promise<Record<string, unknown> | null> {
   if (logseq.Editor.getBlock) {
-    const block = await logseq.Editor.getBlock(blockRef).catch(() => null);
-    const uuid = block ? blockId(block) : null;
-    if (uuid) return uuid;
+    const block = (await logseq.Editor.getBlock(blockRef).catch(() => null)) as Record<string, unknown> | null;
+    if (block) return block;
   }
+  if (!logseq.DB?.datascriptQuery) return null;
+  const raw = String(blockRef).trim();
+  try {
+    let rows: unknown[] | null = null;
+    if (/^\d+$/.test(raw)) {
+      rows = await logseq.DB.datascriptQuery(
+        '[:find (pull ?b [*]) :in $ ?e :where [?b :db/id ?e]]',
+        Number(raw),
+      );
+    } else if (isUuidLike(raw)) {
+      rows = await logseq.DB.datascriptQuery(
+        '[:find (pull ?b [*]) :in $ ?u :where [?b :block/uuid ?u]]',
+        `#uuid "${raw}"`,
+      );
+    }
+    const record = Array.isArray(rows) ? (rows[0] as unknown[])?.[0] : null;
+    return (record as Record<string, unknown> | null) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveBlockIdentity(blockRef: string | number): Promise<string | number> {
+  const block = await readBlockEntity(blockRef);
+  const uuid = block ? blockId(block) : null;
+  if (uuid) return uuid;
   return blockRef;
 }
 
@@ -222,15 +247,13 @@ async function resolveBlockEntityId(blockRef: string | number | null | undefined
   if (/^\d+$/.test(raw)) return Number(raw);
 
   let uuid = isUuidLike(raw) ? raw : null;
-  if (logseq.Editor.getBlock) {
-    const block = (await logseq.Editor.getBlock(blockRef).catch(() => null)) as Record<string, unknown> | null;
-    if (block) {
-      const directId = block.id ?? block.dbId ?? block[':db/id'] ?? block['db/id'];
-      const numeric = Number(directId);
-      if (Number.isFinite(numeric) && numeric > 0) return numeric;
-      const blockUuid = block.uuid ?? block[':block/uuid'] ?? block['block/uuid'];
-      if (isUuidLike(blockUuid)) uuid = blockUuid;
-    }
+  const block = await readBlockEntity(blockRef);
+  if (block) {
+    const directId = block.id ?? block.dbId ?? block[':db/id'] ?? block['db/id'];
+    const numeric = Number(directId);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric;
+    const blockUuid = block.uuid ?? block[':block/uuid'] ?? block['block/uuid'];
+    if (isUuidLike(blockUuid)) uuid = blockUuid;
   }
 
   if (!uuid || !logseq.DB?.datascriptQuery) return null;
@@ -299,12 +322,10 @@ export async function queryCodeChildRefFromQueryProperty(value: unknown): Promis
   const direct = propertyBlockRefId(value);
   if (direct == null) return null;
 
-  const directBlock = logseq.Editor.getBlock
-    ? ((await logseq.Editor.getBlock(direct).catch(() => null)) as Record<string, unknown> | null)
-    : null;
+  const directBlock = await readBlockEntity(direct);
   if (!directBlock) return direct;
 
-  const directText = String(directBlock.content ?? directBlock.title ?? '').trim();
+  const directText = String(directBlock.content ?? directBlock.title ?? directBlock[':block/title'] ?? directBlock['block/title'] ?? '').trim();
   if (isAdvancedQueryBlockContent(directText)) return direct;
   if (isUuidLike(directText)) {
     const actual = logseq.Editor.getBlock
@@ -330,12 +351,12 @@ export async function queryContentFromQueryPropertyValue(value: unknown): Promis
     if (isAdvancedQueryBlockContent(text)) return text;
   }
   const ref = propertyBlockRefId(value);
-  if (ref == null || !logseq.Editor.getBlock) return '';
-  const valueBlock = (await logseq.Editor.getBlock(ref).catch(() => null)) as Record<string, unknown> | null;
-  const text = String(valueBlock?.content ?? valueBlock?.title ?? '').trim();
+  if (ref == null) return '';
+  const valueBlock = await readBlockEntity(ref);
+  const text = String(valueBlock?.content ?? valueBlock?.title ?? valueBlock?.[':block/title'] ?? valueBlock?.['block/title'] ?? '').trim();
   if (isAdvancedQueryBlockContent(text)) return text;
   if (isUuidLike(text) || /^\d+$/.test(text)) {
-    const target = await logseq.Editor.getBlock(isUuidLike(text) ? text : Number(text)).catch(() => null);
+    const target = await readBlockEntity(isUuidLike(text) ? text : Number(text));
     const targetText = String((target as Record<string, unknown> | null)?.content ?? (target as Record<string, unknown> | null)?.title ?? '').trim();
     if (isAdvancedQueryBlockContent(targetText)) return targetText;
   }
@@ -765,10 +786,10 @@ export async function inspectDbQueryBlockStructure(block: any): Promise<DbQueryB
   if (childId != null) {
     hasQueryProperty = true;
     if (logseq.Editor.getBlock) {
-      const child = await logseq.Editor.getBlock(childId).catch(() => null);
+      const child = await readBlockEntity(childId);
       if (child) {
         const childRecord = child as Record<string, unknown>;
-        const childContent = String(childRecord.content ?? childRecord.title ?? '').trim();
+        const childContent = String(childRecord.content ?? childRecord.title ?? childRecord[':block/title'] ?? childRecord['block/title'] ?? '').trim();
         queryEdnInChild = isAdvancedQueryBlockContent(childContent);
         childTitleHasEdn = queryEdnInChild;
         let childProps: Record<string, unknown> = {};

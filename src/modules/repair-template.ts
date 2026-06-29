@@ -73,6 +73,11 @@ function hasMeaningfulChildren(block: any): boolean {
   return false;
 }
 
+async function refreshTargetPageBlocks(pageName: string, fallback: any[]): Promise<any[]> {
+  const blocks = await getBlocks(pageName);
+  return blocks.length ? blocks : fallback;
+}
+
 async function removeObsoleteRootHeadings(result: Result, blocks: any[], obj: RegistryObject): Promise<number> {
   if (!logseq.Editor.removeBlock) return 0;
   let removed = 0;
@@ -145,14 +150,14 @@ export async function materializeTemplateSections(
   const existing = existingSections(blocks);
   let inserted = 0;
   inserted += await removeObsoleteRootHeadings(result, blocks, obj);
-  if (inserted) blocks = await getBlocks(pageName);
+  if (inserted) blocks = await refreshTargetPageBlocks(pageName, blocks);
   let nativeSectionsHeadingId: string | null = null;
   for (const heading of PAGE_SECTION_HEADING_ORDER) {
     const ensured = await ensureRootHeading(result, pageName, pageRootBlockId, blocks, heading, obj);
     inserted += ensured.inserted;
     if (heading === PAGE_SECTION_HEADINGS.nativeSections) nativeSectionsHeadingId = ensured.id;
     if (ensured.inserted) {
-      blocks = await getBlocks(pageName);
+      blocks = await refreshTargetPageBlocks(pageName, blocks);
     }
   }
 
@@ -173,7 +178,7 @@ export async function materializeTemplateSections(
       }
       if (!block) {
         await sleep(THROTTLE_MS);
-        const fresh = await getBlocks(pageName);
+        const fresh = await refreshTargetPageBlocks(pageName, blocks);
         const freshExisting = existingSections(fresh);
         if (freshExisting.has(key)) {
           existing.add(key);

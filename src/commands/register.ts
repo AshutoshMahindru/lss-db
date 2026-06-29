@@ -71,14 +71,22 @@ import {
 } from '../modules/setup';
 import { cleanNativeTagSchemaProperties } from '../modules/native-tag-cleanup';
 
-type Handler = (r: import('../core/types').Result) => Promise<void>;
+type Handler = (r: import('../core/types').Result, context?: import('../core/types').CommandContext) => Promise<void>;
 
 const registeredLabels = new Set<string>();
 
 function register(label: string, fn: Handler): void {
   if (registeredLabels.has(label)) return;
   registeredLabels.add(label);
-  logseq.Editor.registerSlashCommand(label, () => run(label, fn));
+  logseq.Editor.registerSlashCommand(label, (context) => run(label, fn, context));
+}
+
+function registerPalette(label: string, key: string, fn: Handler): void {
+  logseq.App.registerCommandPalette({ key, label }, (context) => run(label, fn, context));
+}
+
+function registerPageMenu(label: string, fn: Handler): void {
+  logseq.App.registerPageMenuItem(label, (context) => run(label, fn, context));
 }
 
 function registerAlias(alias: string, numberedLabel: string, fn: Handler): void {
@@ -88,15 +96,6 @@ function registerAlias(alias: string, numberedLabel: string, fn: Handler): void 
 
 function registerAliases(labels: string[], fn: Handler): void {
   for (const label of labels) register(label, fn);
-}
-
-function registerCommandAliases(canonicalLabel: string, aliases: string[], fn: Handler): void {
-  const wrapped = (result: import('../core/types').Result) => {
-    result.command = canonicalLabel;
-    return fn(result);
-  };
-  register(canonicalLabel, fn);
-  for (const alias of aliases) register(alias, wrapped);
 }
 
 function registerRegistryCreationCommands(): void {
@@ -166,11 +165,9 @@ export function registerCommands(): void {
   register('lss: 47create-command-list-page', createCommandListPage);
   register('lss: 48create-layer-home-pages', createLayerHomePages);
   register('lss: 49add-layer-links-to-home', addLayerLinksToHome);
-  registerCommandAliases(
-    'lss: materialise page',
-    ['lss: materialise', 'lss materialise page', 'lss materialise', 'LSS: Materialise Page'],
-    repairCurrentPage,
-  );
+  register('lss: materialise page', repairCurrentPage);
+  registerPalette('lss: materialise page', 'lss-materialise-page', repairCurrentPage);
+  registerPageMenu('lss: materialise page', repairCurrentPage);
   register('lss: 51diagnose-current-page', diagnoseCurrentPage);
   registerAlias('LSS: New Function', 'lss: 52new-function', newFunction);
   registerAliases(

@@ -1,8 +1,8 @@
 {
   "name": "logseq-lss-db-final-plugin",
-  "version": "2.0.15",
+  "version": "2.0.41",
   "title": "LSS DB Final Plugin",
-  "description": "Modular LSS DB Final Plugin v2.0.15 — step-by-step setup, creation, audit/repair, and maintenance commands.",
+  "description": "Modular LSS DB Final Plugin v2.0.41 — step-by-step setup, creation, audit/repair, and maintenance commands.",
   "main": "dist/index.html",
   "type": "module",
   "effect": true,

@@ -14,6 +14,7 @@ import {
   resolveUpsertPropertyValue,
   toJournalDay,
 } from '../core/db-properties';
+import { VERSION } from '../config';
 import { defaultPropertyValue, uniqueObjectProps } from './templates';
 import { objectByName } from '../registry';
 import { enterRepairSession, exitRepairSession, markRepairCooldown } from './auto-repair';
@@ -32,24 +33,22 @@ import {
 } from '../core/editor';
 import { formatError, sleep } from '../core/runner';
 import { fixPhantomTagParenSyntax, looksLikeUuid, safePageName, safeTag, tsKey, visiblePageLabel } from '../core/names';
-import type { Result } from '../core/types';
+import type { CommandContext, Result } from '../core/types';
 import type { RegistryObject } from '../registry/types';
 import { allObjects, propertySpec, templateDefByObjectType } from '../registry';
 import { applyInstanceHintTagsToProps, harvestInlineTags, isInstanceHintTag } from './repair-hints';
 import { relationshipPropertyNames, sectionNameFromLine } from './queries';
-import {
-  repairDashboardQueries as repairDashboardQueriesWithInference,
-  repairLinkedParentDashboards,
-} from './repair-dashboard';
+import { type DashboardRepairOptions, repairDashboardQueries as repairDashboardQueriesWithInference, repairLinkedParentDashboards } from './repair-dashboard';
 import { applyIncomingSourceTagsForPage } from './repair-source-tags';
 import { syncInverseRelationshipProperties } from './repair-inverse-relationships';
 import { materializeTemplateSections } from './repair-template';
 import { cleanForeignPluginPropertyCopies, ensurePlaceholderPagesForNodeValue, isForeignPluginRegistryPropertyKey, isPlaceholderNodeDefault, readDatascriptUserPropertyValue } from './repair-user-properties';
-import { pageLooksMaterializable, recentTaggedLssPageFallback } from './repair-current-page';
 import { ensureMaterialiseNativeProperties } from './repair-native-properties';
+import { isProtectedMaterialisePage, readRepairPageBlocks, resolveRepairPage } from './repair-page-resolution';
 import { ensureRelatedToBeforeTrailingAdminProperties, ensureRelatedToPropertyOrder, removeNativeTagSchemaProperties } from './setup';
 import { upsertBlockPropertyViaHost } from './advanced-query-blocks';
 
+type RepairSpecificPageOptions = { repairLinkedParents?: boolean; maxDashboardQueryViews?: number; dashboardQueryPageSectionHeadings?: string[]; aggregateDashboardQueryPageSectionHeadings?: string[] };
 function repairPropertyLines(content: string): Array<{ property: string; value: string }> {
   const lines: Array<{ property: string; value: string }> = [];
   for (const line of String(content ?? '').split(/\r?\n/)) {
@@ -194,6 +193,12 @@ function inferCurrentPageObjectType(pageName: string, blocks: any[]): string | n
   return null;
 }
 
+const isProtectedMaterialiseCommandTarget = (pageName: string): boolean => isProtectedMaterialisePage(pageName);
+
+function defaultUntypedMaterialiseObjectType(pageName: string, props: Map<string, string>): string | null {
+  return isProtectedMaterialisePage(pageName, props) ? null : 'Venture';
+}
+
 function pageNamesEquivalent(a: string, b: string): boolean {
   const norm = (value: string) => safePageName(value).toLowerCase();
   return norm(a) === norm(b);
@@ -299,6 +304,7 @@ async function resolveRelationshipRepairValueToRefs(value: string): Promise<stri
   if (!names.length) return value;
   const refs: string[] = [];
   for (const name of names) {
+    if (looksLikePageEntityId(name)) { refs.push(name); continue; }
     const page =
       (await getPage(name)) ||
       (await getPage(safePageName(name))) ||
@@ -788,6 +794,7 @@ async function dbPropertyValueToRepairString(
     if (name) return `[[${safePageName(name)}]]`;
     const id = record.id ?? record.uuid;
     if (id) {
+      if (RELATIONSHIP_PROPERTIES.has(shortKey)) return String(id);
       const resolved = await resolveVisibleNodeToken(result, String(id));
       return `[[${safePageName(resolved)}]]`;
     }
@@ -806,6 +813,7 @@ async function dbPropertyValueToRepairString(
     return `[[${safePageName(resolved)}]]`;
   }
   if (looksLikePageEntityId(raw)) {
+    if (RELATIONSHIP_PROPERTIES.has(shortKey)) return raw;
     const resolved = await resolveVisibleNodeToken(result, raw);
     return `[[${safePageName(resolved)}]]`;
   }
@@ -977,14 +985,20 @@ async function inferObjectTypeForRepairPage(
 
   const fromSections = inferCurrentPageObjectType(pageName, blocks);
   const fromIncoming = fromSections ? null : (await inferVentureFromIncomingFunctions(pageName, pageBlockId, result)) ? 'Venture' : null;
-  const inferred = fromSections ?? fromIncoming;
+  const fromExplicitMaterialise = fromSections || fromIncoming ? null : defaultUntypedMaterialiseObjectType(pageName, props);
+  const inferred = fromSections ?? fromIncoming ?? fromExplicitMaterialise;
   if (!inferred) return null;
   const obj = objectByName(inferred);
   const tag = obj ? safeTag(obj.tag) : safeTag(inferred);
   if (tag) tags.add(tag);
   if (!props.get('lss-object-type')) props.set('lss-object-type', inferred);
+  const source = fromSections
+    ? 'page sections'
+    : fromIncoming
+      ? 'incoming Function references'
+      : 'explicit materialise on an ordinary untyped page';
   result.notes.push(
-    `Inferred lss-object-type:: ${inferred} from ${fromSections ? 'page sections' : 'incoming Function references'}; bootstrapping page tag #${tag || inferred}.`,
+    `Inferred lss-object-type:: ${inferred} from ${source}; bootstrapping page tag #${tag || inferred}.`,
   );
   return inferred;
 }
@@ -992,12 +1006,14 @@ async function inferObjectTypeForRepairPage(
 async function repairPageCore(
   result: Result,
   pageName: string,
+  page: any,
   pageBlockId: string,
   blocks: any[],
   typeHint: string | null,
   label: string,
+  options: RepairSpecificPageOptions = {},
 ): Promise<{ objectType: string | null; repaired: number; linked: number; resolvedTags: Set<string>; props: Map<string, string> }> {
-  const page = await getPage(pageName);
+  const repairLinkedParents = options.repairLinkedParents ?? true;
   const { props, tags, instanceHints } = await gatherPageRepairState(result, pageName, pageBlockId, page, blocks);
   const hintedType = typeHint ? canonicalObjectTypeToken(typeHint) : null;
   if (typeHint && !hintedType) result.errors.push(`Repair ${label}: unknown LSS type hint ${typeHint}`);
@@ -1146,8 +1162,7 @@ async function repairPageCore(
     if (obj) {
       materializedSections = await materializeTemplateSections(result, pageName, obj, blocks, pageBlockId);
       if (materializedSections) {
-        blocks = await getBlocks(pageName);
-        if (!blocks?.length && safePageName(pageName) !== pageName) blocks = await getBlocks(safePageName(pageName));
+        blocks = await readRepairPageBlocks(pageName, page);
       }
     }
   }
@@ -1172,16 +1187,36 @@ async function repairPageCore(
   if (objectType) {
     result.notes.push(`Dashboard query repair: inferred object type for ${pageName}: ${objectType}.`);
   }
-  const repaired = await repairDashboardQueries(result, pageName, blocks, objectType);
-  const linked = await repairLinkedParentDashboards(
+  const repaired = await repairDashboardQueries(
     result,
-    props,
-    objectType,
     pageName,
-    repairPageRefsFromValue,
-    resolveVisibleNodeToken,
-    inferCurrentPageObjectType,
+    blocks,
+    objectType,
+    null,
+    {
+      ...(options.maxDashboardQueryViews != null ? { maxViews: options.maxDashboardQueryViews } : {}),
+      ...(options.dashboardQueryPageSectionHeadings ? { pageSectionHeadings: options.dashboardQueryPageSectionHeadings } : {}),
+      ...(options.aggregateDashboardQueryPageSectionHeadings
+        ? { aggregatePageSectionHeadings: options.aggregateDashboardQueryPageSectionHeadings }
+        : {}),
+    },
   );
+  let linked = 0;
+  if (repairLinkedParents) {
+    linked = await repairLinkedParentDashboards(
+      result,
+      props,
+      objectType,
+      pageName,
+      repairPageRefsFromValue,
+      resolveVisibleNodeToken,
+      inferCurrentPageObjectType,
+    );
+  } else {
+    result.notes.push(
+      `SKIP linked parent dashboard repair for ${pageName}; lss: materialise page is scoped to the selected page.`,
+    );
+  }
 
   result.notes.push(
     `Repair ${label}: ${pageName}; promoted ${resolvedTags.size} tag(s), ${props.size} property candidate(s), synced ${inverseSynced} inverse relationship(s), inserted ${materializedSections} template section(s), fixed ${phantomTagsFixed} phantom (#tag) block(s), concretized ${concretized} query block(s), repaired ${repaired} dashboard query block(s), repaired ${linked} linked parent dashboard query block(s).`,
@@ -1379,6 +1414,7 @@ export async function repairDashboardQueries(
   blocks: any[],
   typeHint: string | null = null,
   sectionsFilter: Set<string> | null = null,
+  options: DashboardRepairOptions = {},
 ): Promise<number> {
   return repairDashboardQueriesWithInference(
     result,
@@ -1387,6 +1423,7 @@ export async function repairDashboardQueries(
     typeHint,
     sectionsFilter,
     inferCurrentPageObjectType,
+    options,
   );
 }
 
@@ -1395,11 +1432,12 @@ async function repairSpecificPage(
   pageRef: string,
   typeHint: string | null = null,
   label = 'linked',
+  options: RepairSpecificPageOptions = {},
 ): Promise<number> {
   let pageName = String(pageRef ?? '').trim();
   if (!pageName) return 0;
   pageName = await resolveVisibleNodeToken(result, pageName);
-  let page = (await getPage(pageName)) || (await getPage(safePageName(pageName))) || (await getPage(safeTag(pageName)));
+  const page = await resolveRepairPage(pageName);
   if (!page) {
     result.errors.push(`Repair ${label}: could not read page ${pageName}`);
     return 0;
@@ -1411,21 +1449,19 @@ async function repairSpecificPage(
     result.errors.push(`Repair ${label}: page has no uuid/id exposed by Logseq API: ${pageName}`);
     return 0;
   }
+  result.notes.push(`Repair ${label}: selected ${pageName}; page identity ${pageBlockId}.`);
 
   enterRepairSession();
   markRepairCooldown(pageName);
   try {
-    let blocks = await getBlocks(pageName);
-    if (!blocks?.length && safePageName(pageName) !== pageName) {
-      blocks = await getBlocks(safePageName(pageName));
-    }
+    let blocks = await readRepairPageBlocks(pageName, page);
     if (pageRecordIsJournal(page, pageName)) {
       await removeNativeTagSchemaProperties(result);
       const materialized = await materializeJournalEntityBlocks(result, pageName, blocks);
       markRepairCooldown(pageName);
       return materialized;
     }
-    const { objectType, repaired } = await repairPageCore(result, pageName, pageBlockId, blocks, typeHint, label);
+    const { objectType, repaired } = await repairPageCore(result, pageName, page, pageBlockId, blocks, typeHint, label, options);
     if (label === 'current page' && !objectType) {
       result.errors.push(
         `Materialise page: ${pageName} has no primary LSS type. Add exactly one LSS type tag to the page, or tag one source/journal block that links to [[${safePageName(pageName)}]] with exactly one LSS type tag, then rerun lss: materialise page.`,
@@ -1446,22 +1482,19 @@ export async function repairNamedPage(
   return repairSpecificPage(result, pageRef, typeHint, 'named');
 }
 
-export async function repairCurrentPage(result: Result): Promise<void> {
-  const current = await currentPageName();
+export async function repairCurrentPage(result: Result, context?: CommandContext): Promise<void> {
+  const commandBlockUuid = String(context?.uuid ?? context?.payload?.uuid ?? '').trim();
+  if (commandBlockUuid) result.notes.push(`Materialise command invoked from block: ${commandBlockUuid}.`);
+  const rawCurrent = await currentPageName(context);
+  if (rawCurrent && isProtectedMaterialiseCommandTarget(rawCurrent)) {
+    result.notes.push(`Materialise resolver skipped protected/control page: ${rawCurrent}.`);
+  }
+  const current = await currentPageName(context, { reject: isProtectedMaterialiseCommandTarget });
+  result.notes.push(`Materialise plugin version: ${VERSION}.`);
   if (!current) {
-    result.errors.push('No current page detected. Open a page, click inside it, and rerun.');
+    result.errors.push('No materialisable current page detected. Open the target entity page itself, click inside it, and rerun lss: materialise page.');
     return;
   }
-  const page = await getPage(current);
-  if (!page) {
-    result.errors.push(`Could not read current page object: ${current}`);
-    return;
-  }
-  let pageName = pageVisibleName(page, current) || current;
-  if (!(await pageLooksMaterializable(pageName))) {
-    const fallback = await recentTaggedLssPageFallback(result, pageName);
-    if (fallback) pageName = fallback;
-  }
-  result.notes.push(`Materialise current-page resolver selected: ${pageName}.`);
-  await repairSpecificPage(result, pageName, null, 'current page');
+  result.notes.push(`Materialise raw current-page resolver returned: ${current}.`);
+  await repairSpecificPage(result, current, null, 'current page', { repairLinkedParents: false, maxDashboardQueryViews: 2, dashboardQueryPageSectionHeadings: ['FORMS', 'REVIEWS'], aggregateDashboardQueryPageSectionHeadings: ['FORMS', 'REVIEWS'] });
 }
