@@ -1,5 +1,6 @@
 export {
   blockHasQueryClassTag,
+  cleanupDbAdvancedQueryBlockChildren,
   configureDbAdvancedQueryBlock,
   dbAdvancedQueryBlockNeedsStructureRepair,
   expandBlockUi,
@@ -10,8 +11,10 @@ export {
   hostQueryRepairScriptsReady,
   inspectDbQueryBlockStructure,
   isAdvancedQueryBlockContent,
+  isDbQueryValueChildBlock,
   isLegacyBeginQueryWrapper,
   moveBlockAsChildViaHost,
+  moveBlockAfterViaHost,
   normalizeKeywordPropertyName,
   propertyBlockRefId,
   QUERY_PROPERTY_KEY,

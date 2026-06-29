@@ -50,7 +50,7 @@ async function blockPageRecord(blockRef: string | number): Promise<Record<string
   try {
     const rows = /^\d+$/.test(raw)
       ? await logseq.DB.datascriptQuery(
-        '[:find (pull ?p [*]) :in $ ?e :where [?b :db/id ?e] [?b :block/page ?p]]',
+        '[:find (pull ?p [*]) :in $ ?b :where [?b :block/page ?p]]',
         Number(raw),
       )
       : await logseq.DB.datascriptQuery(
@@ -84,7 +84,7 @@ async function blockParentEntityId(blockRef: string | number): Promise<number | 
   if (entityId == null || !logseq.DB?.datascriptQuery) return null;
   try {
     const rows = await logseq.DB.datascriptQuery(
-      '[:find ?p :in $ ?e :where [?b :db/id ?e] [?b :block/parent ?p]]',
+      '[:find ?p :in $ ?b :where [?b :block/parent ?p]]',
       entityId,
     );
     const parentId = Array.isArray(rows) ? rows[0]?.[0] : null;
@@ -135,10 +135,10 @@ async function resolvePageByDbId(entityId: string | number): Promise<any | null>
   if (!Number.isFinite(id) || id <= 0 || !logseq.DB?.datascriptQuery) return null;
   try {
     const rows = await logseq.DB.datascriptQuery(
-      `[:find (pull ?b [*])
+      `[:find (pull ?id [*])
  :in $ ?id
  :where
- [?b :db/id ?id]]`,
+ [?id :block/name]]`,
       id,
     );
     const record = Array.isArray(rows) ? rows[0]?.[0] : null;

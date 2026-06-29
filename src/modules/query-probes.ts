@@ -206,10 +206,10 @@ export async function datascriptInspectEntityId(
   if (!logseq.DB?.datascriptQuery) return null;
   const id = Number(entityId);
   if (!Number.isFinite(id) || id <= 0) return null;
-  const query = `[:find (pull ?b [*])
+  const query = `[:find (pull ?eid [*])
  :in $ ?eid
  :where
- [?b :db/id ?eid]]`;
+ [?eid :block/title]]`;
   try {
     const results = await logseq.DB.datascriptQuery(query, id);
     const row = Array.isArray(results) ? results[0] : null;

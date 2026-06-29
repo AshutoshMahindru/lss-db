@@ -314,8 +314,7 @@ export async function readIncomingSourceTagsForPage(
           `[:find ?tagTitle ?b
  :in $ ?targetId
  :where
- [?target :db/id ?targetId]
- [?b :block/refs ?target]
+ [?b :block/refs ?targetId]
  [?b :block/tags ?tag]
  [?tag ${attr} ?tagTitle]]`,
           pageId,

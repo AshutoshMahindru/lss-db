@@ -564,15 +564,18 @@ async function clearCapturedPropertyValues(
   let cleared = 0;
   let failed = 0;
   for (const item of captured) {
+    const targets = await mutationTargetsForBlockId(item.blockId);
     let removed = false;
     let lastError = '';
-    for (const key of [...new Set(keys)]) {
-      try {
-        await logseq.Editor.removeBlockProperty(item.blockId, key);
-        removed = true;
-        break;
-      } catch (error) {
-        lastError = formatError(error);
+    for (const target of targets) {
+      for (const key of [...new Set(keys)]) {
+        try {
+          await logseq.Editor.removeBlockProperty(target, key);
+          removed = true;
+          await sleep(10);
+        } catch (error) {
+          lastError = formatError(error);
+        }
       }
     }
     if (removed) {
@@ -585,6 +588,26 @@ async function clearCapturedPropertyValues(
   r.actions.push(`CLEAR ${property} values before reset: ${cleared}/${captured.length}`);
   await sleep(150);
   return failed === 0;
+}
+
+async function mutationTargetsForBlockId(rawBlockId: string): Promise<string[]> {
+  const targets = new Set<string>();
+  const add = (value: unknown) => {
+    const raw = String(value ?? '').trim();
+    if (raw) targets.add(raw);
+  };
+  add(rawBlockId);
+  const page = await resolvePageFromIdentity(rawBlockId).catch(() => null);
+  add(blockId(page));
+  const uuid = (page as Record<string, unknown> | null)?.uuid ?? (page as Record<string, unknown> | null)?.[':block/uuid'] ?? (page as Record<string, unknown> | null)?.['block/uuid'];
+  add(uuid);
+  if (logseq.Editor.getBlock) {
+    const block = await logseq.Editor.getBlock(rawBlockId).catch(() => null);
+    add(blockId(block));
+    const blockRecord = block as Record<string, unknown> | null;
+    add(blockRecord?.uuid ?? blockRecord?.[':block/uuid'] ?? blockRecord?.['block/uuid']);
+  }
+  return [...targets];
 }
 
 async function waitForNativePropertyRemoval(name: string): Promise<boolean> {
@@ -609,6 +632,8 @@ async function restoreCapturedPropertyValues(
   let restoreFailed = 0;
   if (logseq.Editor.upsertBlockProperty) {
     for (const item of captured) {
+      const targets = await mutationTargetsForBlockId(item.blockId);
+      const targetBlockId = targets[0] ?? item.blockId;
       const raw = await propertyValueToRestoreStringAsync(item.value);
       if (!raw) continue;
       let upsertValue = await resolveUpsertPropertyValue(cleanName, raw);
@@ -627,11 +652,11 @@ async function restoreCapturedPropertyValues(
         continue;
       }
       try {
-        await logseq.Editor.upsertBlockProperty(item.blockId, cleanName, upsertValue, { reset: true });
+        await logseq.Editor.upsertBlockProperty(targetBlockId, cleanName, upsertValue, { reset: true });
         restored++;
       } catch (error) {
         restoreFailed++;
-        r.errors.push(`RESTORE ${cleanName} on ${item.blockId} failed: ${formatError(error)}`);
+        r.errors.push(`RESTORE ${cleanName} on ${targetBlockId} failed: ${formatError(error)}`);
       }
     }
   }
@@ -654,7 +679,7 @@ async function ensureNativeNodePropertyTargets(r: Result, spec: Record<string, u
   return true;
 }
 
-async function repairNativeNodePropertySchemaInPlace(r: Result, spec: Record<string, unknown>): Promise<void> {
+export async function repairNativeNodePropertySchemaInPlace(r: Result, spec: Record<string, unknown>): Promise<void> {
   const cleanName = canonicalPropertyKey(specPropertyName(spec));
   if (MODE !== 'db') {
     r.notes.push(`repair-${cleanName}-schema applies only to DB graphs.`);

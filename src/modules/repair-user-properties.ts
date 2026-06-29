@@ -250,8 +250,16 @@ async function readEntityTitle(entityId: number): Promise<string> {
 
 async function normalizeDatascriptUserPropertyValue(shortKey: string, value: unknown): Promise<unknown> {
   const specType = String(propertySpec(shortKey)?.type ?? '').toLowerCase();
-  if (typeof value !== 'number') return value;
-  if (specType === 'node') return value;
+  if (typeof value !== 'number') {
+    if (specType === 'node' && value && typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      return record[':logseq.property/value'] ?? record['logseq.property/value'] ?? record.value ?? value;
+    }
+    return value;
+  }
+  if (specType === 'node') {
+    return (await readEntityScalar(value, ':logseq.property/value')) ?? value;
+  }
   if (isDateProperty(shortKey)) {
     const journalDay = await readEntityScalar(value, ':block/journal-day');
     return journalDay ?? (await readEntityScalar(value, ':logseq.property/value')) ?? value;
@@ -285,4 +293,44 @@ export async function readDatascriptUserPropertyValue(pageBlockId: string, short
     }
   }
   return undefined;
+}
+
+export async function datascriptNodePropertyHasValueWrapper(pageBlockId: string, shortKey: string): Promise<boolean> {
+  if (!logseq.DB?.datascriptQuery) return false;
+  if (String(propertySpec(shortKey)?.type ?? '').toLowerCase() !== 'node') return false;
+  const attrs = [safeUserPropertyAttr(shortKey), safePluginPropertyAttr(shortKey)].filter(Boolean);
+  if (!attrs.length) return false;
+  const identity = entityIdentity(pageBlockId);
+  if (identity == null) return false;
+  const pageId = await dbEntityIdForBlockIdentity(identity);
+  if (!pageId) return false;
+  for (const attr of attrs) {
+    try {
+      const rows = await logseq.DB.datascriptQuery(
+        `[:find ?v
+ :in $ ?p
+ :where [?p ${attr} ?v]]`,
+        pageId,
+      );
+      const values = Array.isArray(rows) ? rows.map((row) => row?.[0]).filter((value) => value != null) : [];
+      for (const value of values) {
+        if (value && typeof value === 'object') {
+          const record = value as Record<string, unknown>;
+          if (
+            record[':logseq.property/value'] != null ||
+            record['logseq.property/value'] != null ||
+            record.value != null
+          ) {
+            return true;
+          }
+        }
+        if (typeof value === 'number' && (await readEntityScalar(value, ':logseq.property/value')) != null) {
+          return true;
+        }
+      }
+    } catch {
+      /* try next property namespace */
+    }
+  }
+  return false;
 }

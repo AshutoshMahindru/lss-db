@@ -501,7 +501,7 @@ if (
 }
 if (
   !advancedQueryBlocksSource.includes('async function readBlockEntity') ||
-  !advancedQueryBlocksSource.includes('[:find (pull ?b [*]) :in $ ?e :where [?b :db/id ?e]]') ||
+  !advancedQueryBlocksSource.includes('[:find (pull ?e [*]) :in $ ?e :where [?e :block/title]]') ||
   !advancedQueryBlocksSource.includes('const child = await readBlockEntity(childId)')
 ) {
   fail('advanced query inspection must resolve numeric query child DB ids via Datascript, not only Editor.getBlock');
@@ -585,9 +585,10 @@ if (
   !repairSource.includes('ensureMaterialiseNativeProperties') ||
   !repairNativePropertiesSource.includes('nativeEnsureCache') ||
   repairNativePropertiesSource.includes('resetNativeNodeProperty') ||
-  !repairNativePropertiesSource.includes('Materialise left native')
+  repairNativePropertiesSource.includes('resetNativePropertyDefinition') ||
+  !repairNativePropertiesSource.includes('repairNativeNodePropertySchemaInPlace')
 ) {
-  fail('materialise must cache native property setup checks without destructive stale-schema resets');
+  fail('materialise must cache native property setup checks and use only in-place stale-schema repair');
 }
 if (
   !repairDashboardSource.includes('isPlaceholderPageRef') ||
@@ -606,13 +607,15 @@ if (
   !editorSource.includes('acceptedPageName') ||
   !repairSource.includes('isProtectedMaterialiseCommandTarget') ||
   !repairSource.includes('Materialise resolver skipped protected/control page') ||
-  !repairSource.includes('maxDashboardQueryViews: 2') ||
-  !repairSource.includes("dashboardQueryPageSectionHeadings: ['FORMS', 'REVIEWS']") ||
-  !repairSource.includes("aggregateDashboardQueryPageSectionHeadings: ['FORMS', 'REVIEWS']") ||
+  !repairSource.includes('QUERY_PAGE_SECTION_HEADINGS') ||
+  !repairSource.includes('const materialiseQueryHeadings = [...QUERY_PAGE_SECTION_HEADINGS]') ||
+  !repairSource.includes('maxDashboardQueryViews: materialiseQueryHeadings.length') ||
+  !repairSource.includes('dashboardQueryPageSectionHeadings: materialiseQueryHeadings') ||
+  !repairSource.includes('aggregateDashboardQueryPageSectionHeadings: materialiseQueryHeadings') ||
   !repairDashboardSource.includes('aggregatePageSectionViews') ||
   !repairDashboardSource.includes('pageSectionHeadings')
 ) {
-  fail('lss: materialise page must skip report/control pages and use bounded aggregate Forms/Reviews query repair');
+  fail('lss: materialise page must skip report/control pages and use bounded aggregate page-section query repair');
 }
 if (
   !repairSource.includes('const changed = await repairUpsertPageProperty') ||

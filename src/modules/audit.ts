@@ -1,4 +1,4 @@
-import { MODE } from '../config';
+import { MODE, VERSION } from '../config';
 import {
   appendManagedBlock,
   blockId,
@@ -315,7 +315,7 @@ function formatAuditReport(pageName: string, findings: AuditFinding[]): string {
   const lines: string[] = [];
   lines.push(`Audit for ${pageName}`);
   lines.push(`checked-at:: ${new Date().toISOString()}`);
-  lines.push(`plugin-version:: 2.0.45`);
+  lines.push(`plugin-version:: ${VERSION}`);
   lines.push('');
   if (!findings.length) {
     lines.push('## Summary');

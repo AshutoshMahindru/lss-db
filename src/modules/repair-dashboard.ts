@@ -8,11 +8,14 @@ import { dashboardPageForObjectType, propertySpec, templateDefByObjectType } fro
 import { markRepairCooldown } from './auto-repair';
 import {
   configureDbAdvancedQueryBlock,
+  cleanupDbAdvancedQueryBlockChildren,
   dashboardQueryBlockForViewAsync,
   dbAdvancedQueryBlockNeedsStructureRepair,
   expandBlockUi,
   filterProps,
   inspectDbQueryBlockStructure,
+  isAdvancedQueryBlockContent,
+  isDbQueryValueChildBlock,
   isQueryLikeBlockAsync,
   isManagedPageSectionHeading,
   moveBlockAsChildViaHost,
@@ -28,7 +31,7 @@ import {
   sourceTagsFromQueryContent,
   viewDefinitionsSafe,
 } from './queries';
-import { forceCreateQueryChild } from './advanced-query-blocks';
+import { extractAdvancedQueryVector, forceCreateQueryChild } from './advanced-query-blocks';
 
 type InferObjectType = (pageName: string, blocks: any[]) => string | null;
 type RepairParentRefs = (value: string) => string[];
@@ -37,6 +40,7 @@ export type DashboardRepairOptions = {
   maxViews?: number;
   pageSectionHeadings?: string[];
   aggregatePageSectionHeadings?: string[];
+  skipEmptyQueryViews?: boolean;
 };
 
 type DashboardView = ReturnType<typeof viewDefinitionsSafe>[number];
@@ -124,8 +128,8 @@ function aggregatePageSectionViews(views: DashboardView[], headings: Set<string>
   const aggregated: DashboardView[] = [];
   for (const [key, group] of groups) {
     const sourceTags = [...new Set(group.views.flatMap((view) => sourceTagsForView(view)))];
-    const filterProps = [...new Set(group.views.flatMap((view) => (view.filters ?? []).flatMap(filterProps)))];
-    if (!sourceTags.length || !filterProps.length) continue;
+    const filterProperties = [...new Set(group.views.flatMap((view) => (view.filters ?? []).flatMap(filterProps)))];
+    if (!sourceTags.length || !filterProperties.length) continue;
     const label = aggregateViewLabel(group.heading);
     aggregated.push({
       id: `LSS-MATERIALISE-${key.replace(/[^a-z0-9]+/g, '-').toUpperCase()}`,
@@ -133,7 +137,7 @@ function aggregatePageSectionViews(views: DashboardView[], headings: Set<string>
       title: label,
       section: label,
       sourceTags,
-      filters: [{ propertyAny: filterProps, operator: 'includesCurrentPage' }],
+      filters: [{ propertyAny: filterProperties, operator: 'includesCurrentPage' }],
       viewType: 'table',
       nativeQueryStatus: 'template-query-block',
       exportPolicy: 'inherit',
@@ -143,11 +147,57 @@ function aggregatePageSectionViews(views: DashboardView[], headings: Set<string>
   return [...passthrough, ...aggregated];
 }
 
+function isMaterialiseAggregateView(view: DashboardView): boolean {
+  return /^LSS-MATERIALISE-/i.test(String(view.id ?? ''));
+}
+
+function pageEntityDbId(pageEntity: any): number | undefined {
+  const raw =
+    pageEntity?.id ??
+    pageEntity?.dbId ??
+    pageEntity?.[':db/id'] ??
+    pageEntity?.['db/id'];
+  const id = Number(raw);
+  return Number.isFinite(id) && id > 0 ? id : undefined;
+}
+
+async function probeAdvancedQueryRows(
+  queryContent: string,
+  pageEntity: any,
+): Promise<'empty' | 'nonempty' | 'unknown'> {
+  const queryVector = extractAdvancedQueryVector(queryContent);
+  if (!queryVector || !logseq.DB?.datascriptQuery) return 'unknown';
+  try {
+    const pageId = pageEntityDbId(pageEntity);
+    const rows = /\?current\b/.test(queryVector) && pageId != null
+      ? await logseq.DB.datascriptQuery(queryVector, pageId)
+      : await logseq.DB.datascriptQuery(queryVector);
+    if (!Array.isArray(rows)) return rows == null ? 'empty' : 'nonempty';
+    return rows.length > 0 ? 'nonempty' : 'empty';
+  } catch {
+    return 'unknown';
+  }
+}
+
 function blockTitle(block: any): string {
   return String(block?.content ?? block?.title ?? '')
     .split(/\r?\n/)[0]
     .replace(/^[-*]\s+/, '')
     .trim();
+}
+
+function blockFullText(block: any): string {
+  return String(
+    block?.content ??
+      block?.title ??
+      block?.[':block/title'] ??
+      block?.['block/title'] ??
+      '',
+  ).trim();
+}
+
+async function isAdvancedQueryValueBlock(block: any): Promise<boolean> {
+  return isAdvancedQueryBlockContent(blockFullText(block)) && (await isDbQueryValueChildBlock(block));
 }
 
 function titleMatchesView(block: any, queryTitle: string, section: string): boolean {
@@ -202,7 +252,10 @@ async function queryBlockUsesCurrentSource(block: any, currentSources: Set<strin
 }
 
 async function managedQueryTitleCandidate(block: any): Promise<boolean> {
-  if (await isQueryLikeBlockAsync(block)) return true;
+  if (await isAdvancedQueryValueBlock(block)) return false;
+  const queryLike = await isQueryLikeBlockAsync(block);
+  if (isManagedPageSectionHeading(blockTitle(block)) && !queryLike) return false;
+  if (queryLike) return true;
   return canRemoveSectionWrapper(block);
 }
 
@@ -254,6 +307,7 @@ async function queryCandidateUnderHeading(
   const headingKey = normalizedQueryTitle(heading);
   for (const entry of walkBlocksWithManagedHeading(blocks)) {
     if (normalizedQueryTitle(entry.heading ?? '') !== headingKey) continue;
+    if (await isAdvancedQueryValueBlock(entry.block)) continue;
     const queryLike = await isQueryLikeBlockAsync(entry.block);
     if (!queryLike && !(await managedQueryTitleCandidate(entry.block))) continue;
     if (await titleMatchesViewAsync(entry.block, queryTitle, section)) return true;
@@ -292,7 +346,9 @@ async function rootQueryCandidates(
 ): Promise<any[]> {
   const out: any[] = [];
   for (const block of walkBlocks(blocks ?? [])) {
+    if (await isAdvancedQueryValueBlock(block)) continue;
     const queryLike = await isQueryLikeBlockAsync(block);
+    if (!queryLike && isManagedPageSectionHeading(blockTitle(block))) continue;
     if (!queryLike && (await titleMatchesViewAsync(block, queryTitle, section)) && (await managedQueryTitleCandidate(block))) {
       out.push(block);
       continue;
@@ -646,8 +702,9 @@ async function removeStaleDashboardQueryBlocks(
 
   let removed = 0;
   for (const block of rootBlocks ?? []) {
-    if (isManagedPageSectionHeading(blockTitle(block))) continue;
-    if (await isQueryLikeBlockAsync(block)) {
+    const queryLike = await isQueryLikeBlockAsync(block);
+    if (!queryLike && isManagedPageSectionHeading(blockTitle(block))) continue;
+    if (queryLike) {
       if (await titleMatchesAnyViewAsync(block, views)) continue;
       if (!(await queryBlockUsesCurrentSource(block, currentSources))) continue;
       if (await removeDashboardQueryBlock(result, block, `${objectType} stale query`)) removed++;
@@ -816,6 +873,22 @@ export async function repairDashboardQueries(
     const queryTitle = queryTitleForView(view);
     const label = `${objectType} / ${section}`;
     const queryGroupHeading = pageSectionHeadingForView(view);
+    if (options.skipEmptyQueryViews && isMaterialiseAggregateView(view)) {
+      const probe = await probeAdvancedQueryRows(queryContent, pageEntity);
+      if (probe === 'empty') {
+        const emptyCandidates = await rootQueryCandidates(freshBlocks, queryTitle, section, queryContent);
+        let removed = 0;
+        for (const candidate of emptyCandidates) {
+          if (await removeDashboardQueryBlock(result, candidate, `${label} empty aggregate`)) removed++;
+        }
+        if (removed) {
+          changed += removed;
+          freshBlocks = await refreshPageBlocks(pageName, blocks);
+        }
+        result.notes.push(`Dashboard query repair: skipped empty aggregate ${queryTitle} for ${objectType}; query probe returned 0 row(s).`);
+        continue;
+      }
+    }
     if (!ensuredHeadingIds.has(queryGroupHeading)) {
       const ensuredId = await ensureRootHeadingBlock(result, freshBlocks, pageName, pageRootId, queryGroupHeading, objectType);
       ensuredHeadingIds.set(queryGroupHeading, ensuredId);
@@ -866,6 +939,7 @@ export async function repairDashboardQueries(
       const before = await readDashboardQueryBlockContent(canonical);
       const needsContent = queryBlockNeedsRepair(before, queryContent);
       const struct = await inspectDbQueryBlockStructure(canonical);
+      await cleanupDbAdvancedQueryBlockChildren(result, canonical);
       const needsStructure = dbAdvancedQueryBlockNeedsStructureRepair(struct);
       const needsTitle = !(await titleMatchesViewAsync(canonical, queryTitle, section));
       if (needsContent || needsStructure || needsTitle) {

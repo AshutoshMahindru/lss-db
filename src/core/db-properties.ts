@@ -697,13 +697,13 @@ function pageEntityIdFromRecord(
     page[':db/id'] ??
     page['db/id'];
   if (id == null) return null;
+  const label = entityVisibleLabel(page);
   if (/^\d+$/.test(String(requestedName ?? '').trim()) && String(id) === String(requestedName).trim()) {
-    return id as string | number;
+    return label ? (id as string | number) : null;
   }
   // Node properties must point to a page entity. Some Logseq APIs can return
   // property value/block entities for ambiguous names; those have ids but no
   // visible page title and must not be used as node property targets.
-  const label = entityVisibleLabel(page);
   return label && pageLabelMatchesNodeRef(label, requestedName) ? (id as string | number) : null;
 }
 
@@ -746,8 +746,15 @@ export async function resolveUpsertPropertyValue(property: string, value: string
   if (type !== 'node') return value;
 
   const ids = await resolveNodePropertyIds(value);
-  if (!ids.length) return value;
   const cardinality = String((spec as { cardinality?: string } | undefined)?.cardinality ?? '').toLowerCase();
+  if (!ids.length) {
+    const numericRefs = pageNamesFromValue(value)
+      .map((name) => String(name ?? '').trim())
+      .filter((name) => looksLikePageEntityId(name))
+      .map(Number);
+    if (numericRefs.length) return cardinality === 'many' ? numericRefs : numericRefs[0];
+    return value;
+  }
   return cardinality === 'many' ? ids : ids[0];
 }
 

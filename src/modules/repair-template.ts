@@ -8,6 +8,7 @@ import { parseTemplateOutline } from './templates';
 import {
   isManagedPageSectionHeading,
   isObsoletePageSectionHeading,
+  moveBlockAfterViaHost,
   PAGE_SECTION_HEADING_ORDER,
   PAGE_SECTION_HEADINGS,
   sectionNameFromLine,
@@ -134,6 +135,46 @@ async function ensureRootHeading(
   return { id, inserted: 1 };
 }
 
+function rootManagedHeadingIds(blocks: any[]): string[] {
+  return (blocks ?? [])
+    .filter((block) => isManagedPageSectionHeading(String(block?.content ?? block?.title ?? '')))
+    .map((block) => blockId(block))
+    .filter((id): id is string => Boolean(id));
+}
+
+async function ensureManagedHeadingOrder(
+  result: Result,
+  pageName: string,
+  obj: RegistryObject,
+  blocks: any[],
+): Promise<number> {
+  let changed = 0;
+  let fresh = blocks;
+  let previousId: string | null = null;
+  for (const heading of PAGE_SECTION_HEADING_ORDER) {
+    const current = findRootHeading(fresh, heading);
+    const currentId = blockId(current);
+    if (!currentId) continue;
+    if (previousId) {
+      const ids = rootManagedHeadingIds(fresh);
+      const previousIndex = ids.indexOf(previousId);
+      const currentIndex = ids.indexOf(currentId);
+      if (previousIndex >= 0 && currentIndex !== previousIndex + 1) {
+        const moved = await moveBlockAfterViaHost(currentId, previousId);
+        if (moved.ok) {
+          changed++;
+          result.actions.push(`ORDER page section heading: ${obj.name} / ${heading}`);
+          fresh = await refreshTargetPageBlocks(pageName, fresh);
+        } else {
+          result.notes.push(`Could not reorder page section heading ${obj.name}/${heading}: ${moved.error ?? 'unknown error'}.`);
+        }
+      }
+    }
+    previousId = currentId;
+  }
+  return changed;
+}
+
 export async function materializeTemplateSections(
   result: Result,
   pageName: string,
@@ -160,6 +201,9 @@ export async function materializeTemplateSections(
       blocks = await refreshTargetPageBlocks(pageName, blocks);
     }
   }
+  const reordered = await ensureManagedHeadingOrder(result, pageName, obj, blocks);
+  if (reordered) blocks = await refreshTargetPageBlocks(pageName, blocks);
+  nativeSectionsHeadingId = blockId(findRootHeading(blocks, PAGE_SECTION_HEADINGS.nativeSections)) ?? nativeSectionsHeadingId;
 
   for (const section of sections) {
     const key = normalizedSection(section);

@@ -133,6 +133,18 @@ function readAnyProperty(props: Record<string, unknown>, ...names: string[]): un
   return undefined;
 }
 
+function blockText(block: any): string {
+  return String(
+    block?.[':block/content'] ??
+      block?.['block/content'] ??
+      block?.content ??
+      block?.title ??
+      block?.[':block/title'] ??
+      block?.['block/title'] ??
+      '',
+  ).trim();
+}
+
 export type DbQueryBlockStructure = {
   hasQueryClassTag: boolean;
   hasQueryProperty: boolean;
@@ -217,7 +229,7 @@ async function readBlockEntity(blockRef: string | number): Promise<Record<string
     let rows: unknown[] | null = null;
     if (/^\d+$/.test(raw)) {
       rows = await logseq.DB.datascriptQuery(
-        '[:find (pull ?b [*]) :in $ ?e :where [?b :db/id ?e]]',
+        '[:find (pull ?e [*]) :in $ ?e :where [?e :block/title]]',
         Number(raw),
       );
     } else if (isUuidLike(raw)) {
@@ -273,7 +285,7 @@ async function findQueryChildIdFromChildren(parent: any): Promise<string | numbe
   const collect = (b: any): any[] => (b && Array.isArray(b.children) ? b.children : []);
   const pick = (kids: any[]): (string | number) | null => {
     for (const ch of kids) {
-      const c = String(ch?.content ?? ch?.title ?? '').trim();
+      const c = blockText(ch);
       if (isAdvancedQueryBlockContent(c)) {
         const id = blockId(ch);
         if (id) return id;
@@ -325,7 +337,7 @@ export async function queryCodeChildRefFromQueryProperty(value: unknown): Promis
   const directBlock = await readBlockEntity(direct);
   if (!directBlock) return direct;
 
-  const directText = String(directBlock.content ?? directBlock.title ?? directBlock[':block/title'] ?? directBlock['block/title'] ?? '').trim();
+  const directText = blockText(directBlock);
   if (isAdvancedQueryBlockContent(directText)) return direct;
   if (isUuidLike(directText)) {
     const actual = logseq.Editor.getBlock
@@ -353,11 +365,11 @@ export async function queryContentFromQueryPropertyValue(value: unknown): Promis
   const ref = propertyBlockRefId(value);
   if (ref == null) return '';
   const valueBlock = await readBlockEntity(ref);
-  const text = String(valueBlock?.content ?? valueBlock?.title ?? valueBlock?.[':block/title'] ?? valueBlock?.['block/title'] ?? '').trim();
+  const text = blockText(valueBlock);
   if (isAdvancedQueryBlockContent(text)) return text;
   if (isUuidLike(text) || /^\d+$/.test(text)) {
     const target = await readBlockEntity(isUuidLike(text) ? text : Number(text));
-    const targetText = String((target as Record<string, unknown> | null)?.content ?? (target as Record<string, unknown> | null)?.title ?? '').trim();
+    const targetText = blockText(target);
     if (isAdvancedQueryBlockContent(targetText)) return targetText;
   }
   return '';
@@ -755,7 +767,7 @@ export async function blockHasQueryClassTag(blockIdentity: string | number): Pro
 
 export async function inspectDbQueryBlockStructure(block: any): Promise<DbQueryBlockStructure> {
   const id = blockId(block);
-  const parentContent = String(block?.content ?? '').trim();
+  const parentContent = blockText(block);
   const rawEdnInParentContent = isAdvancedQueryBlockContent(parentContent);
   let hasQueryProperty = false;
   let hasCodeChild = false;
@@ -779,17 +791,18 @@ export async function inspectDbQueryBlockStructure(block: any): Promise<DbQueryB
     block?.collapsed;
   const parentCollapsed = parentCollapsedRaw === true || String(parentCollapsedRaw ?? '').toLowerCase() === 'true';
 
-  const queryRef =
-    readAnyProperty(props, 'query', QUERY_PROPERTY_KEY) ??
-    (id != null ? await readBlockDatascriptProperty(id, QUERY_PROPERTY_KEY) : undefined);
-  const childId = await queryCodeChildRefFromQueryProperty(queryRef);
+  const apiQueryRef = readAnyProperty(props, 'query', QUERY_PROPERTY_KEY);
+  const dsQueryRef = id != null ? await readBlockDatascriptProperty(id, QUERY_PROPERTY_KEY) : undefined;
+  const childId =
+    (await queryCodeChildRefFromQueryProperty(apiQueryRef)) ??
+    (await queryCodeChildRefFromQueryProperty(dsQueryRef));
+  const queryRef = apiQueryRef ?? dsQueryRef;
   if (childId != null) {
     hasQueryProperty = true;
     if (logseq.Editor.getBlock) {
       const child = await readBlockEntity(childId);
       if (child) {
-        const childRecord = child as Record<string, unknown>;
-        const childContent = String(childRecord.content ?? childRecord.title ?? childRecord[':block/title'] ?? childRecord['block/title'] ?? '').trim();
+        const childContent = blockText(child);
         queryEdnInChild = isAdvancedQueryBlockContent(childContent);
         childTitleHasEdn = queryEdnInChild;
         let childProps: Record<string, unknown> = {};
@@ -841,7 +854,7 @@ export async function inspectDbQueryBlockStructure(block: any): Promise<DbQueryB
   // the logseq.property/query ref is not exposed by getBlockProperties.
   if (!hasQueryProperty && Array.isArray(block?.children)) {
     for (const ch of block.children) {
-      const ccontent = String(ch?.content ?? ch?.title ?? '').trim();
+      const ccontent = blockText(ch);
       if (isAdvancedQueryBlockContent(ccontent)) {
         queryEdnInChild = true;
         childTitleHasEdn = true;
@@ -1054,6 +1067,34 @@ export async function moveBlockAsChildViaHost(
       HOST_API_TIMEOUT_MS,
       'move block',
     );
+    await sleep(80);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: formatError(error) };
+  }
+}
+
+export async function moveBlockAfterViaHost(
+  sourceBlockRef: string | number,
+  targetBlockRef: string | number,
+): Promise<{ ok: boolean; error?: string }> {
+  const sourceUuid = await resolveBlockUuid(sourceBlockRef);
+  const targetUuid = await resolveBlockUuid(targetBlockRef);
+  if (!sourceUuid || !targetUuid) return { ok: false, error: 'could not resolve source/target block uuid' };
+
+  const host = getLogseqHostWindow();
+  const move =
+    host?.logseq?.api?.move_block ??
+    (logseq.api as { move_block?: (source: string, target: string, options?: { children?: boolean; before?: boolean }) => Promise<void> | void } | undefined)?.move_block;
+  const editorMove =
+    logseq.Editor.moveBlock as
+      | ((source: string, target: string, options?: { children?: boolean; before?: boolean }) => Promise<void> | void)
+      | undefined;
+  const moveFn = typeof move === 'function' ? move : typeof editorMove === 'function' ? editorMove : null;
+  if (!moveFn) return { ok: false, error: 'move block API unavailable' };
+
+  try {
+    await withTimeout(moveFn(sourceUuid, targetUuid, { before: false, children: false }), HOST_API_TIMEOUT_MS, 'move block after');
     await sleep(80);
     return { ok: true };
   } catch (error) {
@@ -1419,6 +1460,83 @@ async function removeObsoleteQueryValueChildren(
   }
 }
 
+async function removeAccidentalQueryShellMetadataFromCodeChild(
+  result: Result,
+  childIdentity: string | number,
+): Promise<void> {
+  await removeObsoleteQueryValueChildren(childIdentity, []);
+
+  const hasAccidentalQueryProperty =
+    (await readBlockDatascriptProperty(childIdentity, QUERY_PROPERTY_KEY)) != null;
+  if (logseq.Editor.removeBlockProperty) {
+    for (const key of [QUERY_PROPERTY_KEY, 'query']) {
+      try {
+        await withTimeout(
+          logseq.Editor.removeBlockProperty(childIdentity, key),
+          HOST_API_TIMEOUT_MS,
+          `remove accidental child ${key}`,
+        );
+        await sleep(10);
+      } catch {
+        /* absent or not removable; best effort */
+      }
+    }
+  }
+
+  const queryTagId = await resolveQueryClassTagId().catch(() => null);
+  const hasAccidentalQueryTag = await blockHasQueryClassTag(childIdentity).catch(() => false);
+  if (queryTagId != null && hasAccidentalQueryTag && logseq.Editor.removeBlockTag) {
+    try {
+      await withTimeout(
+        logseq.Editor.removeBlockTag(childIdentity, queryTagId),
+        HOST_API_TIMEOUT_MS,
+        'remove accidental child query tag',
+      );
+      result.actions.push('REMOVE accidental #Query metadata from query code child');
+      await sleep(20);
+    } catch {
+      /* absent or not removable; best effort */
+    }
+  }
+  if (hasAccidentalQueryProperty) {
+    result.actions.push('REMOVE accidental query property from query code child');
+  }
+}
+
+export async function cleanupDbAdvancedQueryBlockChildren(result: Result, block: any): Promise<void> {
+  const childId = await queryChildEntityIdFromParent(block);
+  if (childId == null) return;
+  const childIdentity = await resolveBlockIdentity(childId);
+  await removeAccidentalQueryShellMetadataFromCodeChild(result, childIdentity);
+}
+
+export async function isDbQueryValueChildBlock(block: any): Promise<boolean> {
+  const id = blockId(block);
+  if (id == null || !isAdvancedQueryBlockContent(blockText(block))) return false;
+
+  let props: Record<string, unknown> = {};
+  if (logseq.Editor.getBlockProperties) {
+    props = ((await logseq.Editor.getBlockProperties(id).catch(() => null)) ?? {}) as Record<string, unknown>;
+  } else if (block?.properties) {
+    props = block.properties as Record<string, unknown>;
+  }
+
+  const createdFrom =
+    readAnyProperty(props, 'created-from-property', QUERY_CREATED_FROM_PROPERTY_KEY) ??
+    (await readBlockDatascriptProperty(id, QUERY_CREATED_FROM_PROPERTY_KEY));
+  if (createdFromIsQueryProperty(createdFrom)) return true;
+
+  const displayType =
+    readAnyProperty(props, 'node/display-type', 'display-type', QUERY_DISPLAY_TYPE_KEY) ??
+    (await readBlockDatascriptProperty(id, QUERY_DISPLAY_TYPE_KEY));
+  if (displayTypeIsCodeKeyword(displayType)) return true;
+
+  const codeLang =
+    readAnyProperty(props, 'code/lang', QUERY_CODE_LANG_KEY) ??
+    (await readBlockDatascriptProperty(id, QUERY_CODE_LANG_KEY));
+  return String(codeLang ?? '').trim().toLowerCase() === 'clojure';
+}
+
 async function updateQueryChildContent(
   result: Result,
   childId: string | number,
@@ -1499,7 +1617,7 @@ async function configureDbAdvancedQueryBlockDirect(
   await expandBlockUi(parentId);
   await removeObsoleteQueryValueChildren(parentId, [childId, childIdentity, childEntityId]);
 
-  if (isAdvancedQueryBlockContent(String(block?.content ?? ''))) {
+  if (isAdvancedQueryBlockContent(blockText(block))) {
     await updateBlockContent(result, block, '', 'Clear raw EDN from query parent shell');
   }
 
@@ -1536,6 +1654,7 @@ async function finalizeDbAdvancedQueryBlockUi(
       );
     } else {
       const childIdentity = await resolveBlockIdentity(childNumericId);
+      await removeAccidentalQueryShellMetadataFromCodeChild(result, childIdentity);
       const createdFrom = await upsertQueryChildCreatedFromPropertyHost(childIdentity);
       if (createdFrom.ok) {
         result.actions.push('SET query child created-from-property=query (host)');
@@ -1697,14 +1816,14 @@ export async function configureDbAdvancedQueryBlock(
 
     let after = await finalizeDbAdvancedQueryBlockUi(result, block, hostChildId);
     let repaired = !dbAdvancedQueryBlockNeedsStructureRepair(after);
-    if (!repaired) {
-      await sleep(100);
+    for (let i = 0; !repaired && i < 12; i++) {
+      await sleep(150);
       after = await finalizeDbAdvancedQueryBlockUi(result, block, hostChildId);
       repaired = !dbAdvancedQueryBlockNeedsStructureRepair(after);
     }
     if (!repaired) {
       result.notes.push(
-        `NOTE: query UI finalize incomplete (tag=${after.hasQueryClassTag ? 'yes' : 'no'}, query-prop=${after.hasQueryProperty ? 'yes' : 'no'}, code-child=${after.hasCodeChild ? 'yes' : 'no'}, child-edn=${after.childTitleHasEdn ? 'yes' : 'no'}, created-from-query=${after.childCreatedFromQueryProperty ? 'yes' : 'no'}, display-code=${after.childDisplayTypeIsCode ? 'yes' : 'no'}, collapsed=${after.parentCollapsed ? 'yes' : 'no'})`,
+        `NOTE: query UI finalize incomplete (tag=${after.hasQueryClassTag ? 'yes' : 'no'}, query-prop=${after.hasQueryProperty ? 'yes' : 'no'}, code-child=${after.hasCodeChild ? 'yes' : 'no'}, child-edn=${after.childTitleHasEdn ? 'yes' : 'no'}, created-from-query=${after.childCreatedFromQueryProperty ? 'yes' : 'no'}, display-code=${after.childDisplayTypeIsCode ? 'yes' : 'no'}, raw-parent=${after.rawEdnInParentContent ? 'yes' : 'no'}, collapsed=${after.parentCollapsed ? 'yes' : 'no'})`,
       );
     }
     return repaired;
@@ -1800,7 +1919,7 @@ export async function forceCreateQueryChild(result: Result, block: any, ednConte
   await upsertQueryBlockProperty(childId, QUERY_CODE_LANG_KEY, 'clojure');
   const childRefForQueryProp = (await resolveBlockEntityId(childId)) ?? (await resolveBlockIdentity(childId));
   await upsertQueryBlockProperty(parentId, QUERY_PROPERTY_KEY, childRefForQueryProp);
-  if (isAdvancedQueryBlockContent(String(block?.content ?? ''))) {
+  if (isAdvancedQueryBlockContent(blockText(block))) {
     await updateBlockContent(result, block, '', 'Clear parent');
   }
   await expandBlockUi(parentId);
@@ -1875,7 +1994,7 @@ export async function fixDbQueryChild(result: Result, block: any, ednContent: st
   await upsertQueryBlockProperty(childId, QUERY_CODE_LANG_KEY, 'clojure');
   const childRefForQueryProp = (await resolveBlockEntityId(childId)) ?? (await resolveBlockIdentity(childId));
   await upsertQueryBlockProperty(parentId, QUERY_PROPERTY_KEY, childRefForQueryProp);
-  if (isAdvancedQueryBlockContent(String(block?.content ?? ''))) {
+  if (isAdvancedQueryBlockContent(blockText(block))) {
     await updateBlockContent(result, block, '', 'Clear parent content');
   }
   await expandBlockUi(parentId);

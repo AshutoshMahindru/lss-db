@@ -37,18 +37,26 @@ import type { CommandContext, Result } from '../core/types';
 import type { RegistryObject } from '../registry/types';
 import { allObjects, propertySpec, templateDefByObjectType } from '../registry';
 import { applyInstanceHintTagsToProps, harvestInlineTags, isInstanceHintTag } from './repair-hints';
-import { relationshipPropertyNames, sectionNameFromLine } from './queries';
+import { QUERY_PAGE_SECTION_HEADINGS, relationshipPropertyNames, sectionNameFromLine } from './queries';
 import { type DashboardRepairOptions, repairDashboardQueries as repairDashboardQueriesWithInference, repairLinkedParentDashboards } from './repair-dashboard';
 import { applyIncomingSourceTagsForPage } from './repair-source-tags';
 import { syncInverseRelationshipProperties } from './repair-inverse-relationships';
 import { materializeTemplateSections } from './repair-template';
-import { cleanForeignPluginPropertyCopies, ensurePlaceholderPagesForNodeValue, isForeignPluginRegistryPropertyKey, isPlaceholderNodeDefault, readDatascriptUserPropertyValue } from './repair-user-properties';
+import {
+  cleanForeignPluginPropertyCopies,
+  datascriptNodePropertyHasValueWrapper,
+  ensurePlaceholderPagesForNodeValue,
+  isForeignPluginRegistryPropertyKey,
+  isPlaceholderNodeDefault,
+  readDatascriptUserPropertyValue,
+} from './repair-user-properties';
 import { ensureMaterialiseNativeProperties } from './repair-native-properties';
 import { isProtectedMaterialisePage, readRepairPageBlocks, resolveRepairPage } from './repair-page-resolution';
+import { currentPageReferenceHints, filterSelfPageRefsFromNodeValue, inferVentureFromIncomingFunctions, referencesCurrentPage } from './repair-relationship-guards';
 import { ensureRelatedToBeforeTrailingAdminProperties, ensureRelatedToPropertyOrder, removeNativeTagSchemaProperties } from './setup';
 import { upsertBlockPropertyViaHost } from './advanced-query-blocks';
 
-type RepairSpecificPageOptions = { repairLinkedParents?: boolean; maxDashboardQueryViews?: number; dashboardQueryPageSectionHeadings?: string[]; aggregateDashboardQueryPageSectionHeadings?: string[]; allowUntypedBootstrap?: boolean };
+type RepairSpecificPageOptions = { repairLinkedParents?: boolean; maxDashboardQueryViews?: number; dashboardQueryPageSectionHeadings?: string[]; aggregateDashboardQueryPageSectionHeadings?: string[]; skipEmptyDashboardQueryViews?: boolean; allowUntypedBootstrap?: boolean };
 function repairPropertyLines(content: string): Array<{ property: string; value: string }> {
   const lines: Array<{ property: string; value: string }> = [];
   for (const line of String(content ?? '').split(/\r?\n/)) {
@@ -81,7 +89,6 @@ function repairPageRefsFromValue(value: string): string[] {
   while ((m = re.exec(String(value ?? '')))) if (m[1]) refs.push(visiblePageLabel(m[1]));
   return refs;
 }
-
 function repairSectionNames(blocks: any[]): Set<string> {
   const set = new Set<string>();
   for (const block of walkBlocks(blocks)) {
@@ -199,77 +206,6 @@ function defaultUntypedMaterialiseObjectType(pageName: string, props: Map<string
   return isProtectedMaterialisePage(pageName, props) ? null : 'Venture';
 }
 
-function pageNamesEquivalent(a: string, b: string): boolean {
-  const norm = (value: string) => safePageName(value).toLowerCase();
-  return norm(a) === norm(b);
-}
-
-function relationshipValueReferencesPage(value: unknown, pageName: string, pageId: unknown): boolean {
-  const test = (item: unknown): boolean => {
-    if (item == null) return false;
-    if (typeof item === 'number') return pageId != null && String(item) === String(pageId);
-    if (typeof item === 'object') {
-      const record = item as Record<string, unknown>;
-      const id = record.id ?? record.dbId ?? record[':db/id'];
-      if (id != null && pageId != null && String(id) === String(pageId)) return true;
-      const name = pageVisibleName(record);
-      return name ? pageNamesEquivalent(name, pageName) : false;
-    }
-    const raw = String(item).trim();
-    if (!raw) return false;
-    if (/^\d+$/.test(raw) && pageId != null) return raw === String(pageId);
-    return pageNamesEquivalent(visiblePageLabel(raw), pageName);
-  };
-  return Array.isArray(value) ? value.some(test) : test(value);
-}
-
-async function readCanonicalBlockProperty(blockIdentity: string, property: string): Promise<unknown> {
-  const readFrom = (props: Record<string, unknown> | null | undefined): unknown => {
-    if (!props) return undefined;
-    for (const [key, value] of Object.entries(props)) {
-      if (canonicalPropertyKey(key) === property) return value;
-    }
-    return undefined;
-  };
-  if (logseq.Editor.getBlockProperties) {
-    const hit = readFrom((await logseq.Editor.getBlockProperties(blockIdentity).catch(() => null)) ?? undefined);
-    if (hit !== undefined) return hit;
-  }
-  if (logseq.Editor.getBlock) {
-    const block = await logseq.Editor.getBlock(blockIdentity).catch(() => null);
-    const hit = readFrom((block as Record<string, unknown> | null)?.properties as Record<string, unknown> | undefined);
-    if (hit !== undefined) return hit;
-  }
-  return undefined;
-}
-
-async function inferVentureFromIncomingFunctions(
-  pageName: string,
-  pageBlockId: string,
-  result: Result,
-): Promise<boolean> {
-  if (!logseq.Editor.getTagObjects) return false;
-  const page = await resolvePageFromIdentity(pageBlockId).catch(() => null);
-  const pageId = (page as Record<string, unknown> | null)?.id;
-  const functions = await logseq.Editor.getTagObjects('Function').catch(() => null);
-  for (const fn of functions ?? []) {
-    const fnBlockId = blockId(fn);
-    if (!fnBlockId) continue;
-    const relationshipValue = await readRelationshipPropertyValue(fnBlockId, 'venture');
-    const visibleValue = await readCanonicalBlockProperty(fnBlockId, 'venture');
-    if (
-      relationshipValueReferencesPage(relationshipValue, pageName, pageId) ||
-      relationshipValueReferencesPage(visibleValue, pageName, pageId)
-    ) {
-      result.notes.push(
-        `Inferred Venture from incoming Function venture reference on ${String((fn as Record<string, unknown>).uuid ?? fnBlockId)}.`,
-      );
-      return true;
-    }
-  }
-  return false;
-}
-
 const RELATIONSHIP_PROPERTIES = new Set(relationshipPropertyNames());
 const SKIP_PROMOTE_KEYS = new Set(['tags', 'block/tags']);
 
@@ -344,15 +280,25 @@ async function pageHasTargetTag(pageName: string, targetType: string): Promise<b
   return pageId ? pageHasClassTag(pageId, targetType) : false;
 }
 
-async function candidateRefsFromPageLinks(blocks: any[], targetType: string): Promise<string[]> {
+async function candidateRefsFromPageLinks(
+  blocks: any[],
+  targetType: string,
+  currentPageHints: Set<string>,
+  pageName: string,
+): Promise<string[]> {
   const out: string[] = [];
   for (const ref of pageRefsInBlocks(blocks)) {
+    if (referencesCurrentPage(ref, pageName, currentPageHints)) continue;
     if (await pageHasTargetTag(ref, targetType)) out.push(ref);
   }
   return [...new Set(out)];
 }
 
-async function candidateRefsFromTaggedPages(targetType: string): Promise<string[]> {
+async function candidateRefsFromTaggedPages(
+  targetType: string,
+  currentPageHints: Set<string>,
+  pageName: string,
+): Promise<string[]> {
   if (!logseq.Editor.getTagObjects) return [];
   const objects = await logseq.Editor.getTagObjects(targetType).catch(() => null);
   const refs: string[] = [];
@@ -364,7 +310,11 @@ async function candidateRefsFromTaggedPages(targetType: string): Promise<string[
       (record.id != null ? await resolvePageFromIdentity(record.id as string | number) : null) ||
       (blockId(item) ? await resolvePageFromIdentity(blockId(item)!) : null);
     const visible = visibleRelationshipName(page as Record<string, unknown> | null, label);
-    if (visible && !isSetupTargetTagNoise(visible, ((page as Record<string, unknown> | null)?.properties ?? {}) as Record<string, unknown>)) {
+    if (
+      visible &&
+      !isSetupTargetTagNoise(visible, ((page as Record<string, unknown> | null)?.properties ?? {}) as Record<string, unknown>) &&
+      !referencesCurrentPage(visible, pageName, currentPageHints)
+    ) {
       refs.push(visible);
     }
   }
@@ -377,6 +327,7 @@ async function inferMissingRequiredRelationshipProps(
   props: Map<string, string>,
   blocks: any[],
   pageName: string,
+  currentPageHints: Set<string>,
 ): Promise<void> {
   for (const key of uniqueObjectProps(obj)) {
     if (String(props.get(key) ?? '').trim()) continue;
@@ -387,12 +338,12 @@ async function inferMissingRequiredRelationshipProps(
 
     const candidates = new Set<string>();
     for (const target of targets) {
-      for (const ref of await candidateRefsFromPageLinks(blocks, target)) candidates.add(ref);
+      for (const ref of await candidateRefsFromPageLinks(blocks, target, currentPageHints, pageName)) candidates.add(ref);
     }
 
     if (candidates.size === 0 && (obj.requiredProperties ?? []).includes(key)) {
       for (const target of targets) {
-        for (const ref of await candidateRefsFromTaggedPages(target)) candidates.add(ref);
+        for (const ref of await candidateRefsFromTaggedPages(target, currentPageHints, pageName)) candidates.add(ref);
       }
     }
 
@@ -1015,6 +966,7 @@ async function repairPageCore(
   options: RepairSpecificPageOptions = {},
 ): Promise<{ objectType: string | null; repaired: number; linked: number; resolvedTags: Set<string>; props: Map<string, string> }> {
   const repairLinkedParents = options.repairLinkedParents ?? true;
+  const currentPageHints = currentPageReferenceHints(pageName, page, pageBlockId);
   const { props, tags, instanceHints } = await gatherPageRepairState(result, pageName, pageBlockId, page, blocks);
   const hintedType = typeHint ? canonicalObjectTypeToken(typeHint) : null;
   if (typeHint && !hintedType) result.errors.push(`Repair ${label}: unknown LSS type hint ${typeHint}`);
@@ -1035,15 +987,18 @@ async function repairPageCore(
       await ensureRelatedToBeforeTrailingAdminProperties(result);
       await applyInstanceHintTagsToProps(result, obj, props, instanceHints, pageName);
       for (const key of uniqueObjectProps(obj)) {
+        const shortKey = canonicalPropertyKey(key);
         if (String(props.get(key) ?? '').trim()) {
           result.actions.push(`SKIP canonical property already present from #${inferredType}: ${key}`);
           continue;
         }
-        const def = defaultPropertyValue(key, obj);
+        const required = (obj.requiredProperties ?? []).map(canonicalPropertyKey).includes(shortKey);
+        const explicitDefault = Object.prototype.hasOwnProperty.call(obj.defaultValues ?? {}, key);
+        const def = isDateProperty(shortKey) && !required && !explicitDefault ? '' : defaultPropertyValue(key, obj);
         props.set(key, def || '');
         result.notes.push(`Ensured canonical property from #${inferredType}: ${key}`);
       }
-      await inferMissingRequiredRelationshipProps(result, obj, props, blocks, pageName);
+      await inferMissingRequiredRelationshipProps(result, obj, props, blocks, pageName, currentPageHints);
     }
   }
 
@@ -1106,7 +1061,9 @@ async function repairPageCore(
   await cleanForeignPluginPropertyCopies(result, pageName, pageBlockId, new Set([...schemaProps].map(canonicalPropertyKey)));
 
   const resolvedTags = await repairResolveTagSet(result, tags);
-  for (const tag of resolvedTags) await repairApplyTagToPage(result, pageBlockId, tag);
+  for (const tag of resolvedTags) {
+    await repairApplyTagToPage(result, pageBlockId, tag, pageName, currentPageHints);
+  }
   const propEntries = [...props.entries()]
     .filter(([prop]) => !SKIP_PROMOTE_KEYS.has(prop) && !prop.startsWith('block/'))
     .sort(([a], [b]) => {
@@ -1118,6 +1075,8 @@ async function repairPageCore(
     const changed = await repairUpsertPageProperty(result, pageBlockId, prop, value, {
       preserveEmpty: requiredProps.has(canonicalPropertyKey(prop)),
       materializeEmptyNode: schemaNodeProps.has(canonicalPropertyKey(prop)),
+      currentPageName: pageName,
+      currentPageHints,
     });
     if (changed && isDateProperty(prop)) {
       await sleep(20);
@@ -1200,6 +1159,7 @@ async function repairPageCore(
       ...(options.aggregateDashboardQueryPageSectionHeadings
         ? { aggregatePageSectionHeadings: options.aggregateDashboardQueryPageSectionHeadings }
         : {}),
+      ...(options.skipEmptyDashboardQueryViews ? { skipEmptyQueryViews: true } : {}),
     },
   );
   let linked = 0;
@@ -1226,7 +1186,13 @@ async function repairPageCore(
   return { objectType, repaired, linked, resolvedTags, props };
 }
 
-async function repairApplyTagToPage(result: Result, pageBlockId: string, tag: string): Promise<boolean> {
+async function repairApplyTagToPage(
+  result: Result,
+  pageBlockId: string,
+  tag: string,
+  pageName?: string,
+  currentPageHints?: Set<string>,
+): Promise<boolean> {
   if (!tag) return false;
   if (!logseq.Editor.addBlockTag) {
     result.notes.push(`addBlockTag API unavailable; could not promote #${tag} to current page.`);
@@ -1249,16 +1215,20 @@ async function repairApplyTagToPage(result: Result, pageBlockId: string, tag: st
     const obj = allObjects().find((o) => safeTag(o.tag) === tag);
     if (obj) {
       for (const key of uniqueObjectProps(obj)) {
-        let def: any = defaultPropertyValue(key, obj);
+        const shortKey = canonicalPropertyKey(key);
+        const required = (obj.requiredProperties ?? []).map(canonicalPropertyKey).includes(shortKey);
+        const explicitDefault = Object.prototype.hasOwnProperty.call(obj.defaultValues ?? {}, key);
+        let def: any = isDateProperty(shortKey) && !required && !explicitDefault ? '' : defaultPropertyValue(key, obj);
         if (def == null && isDateProperty(key)) {
           def = toJournalDay(defaultPropertyValue(key, obj) || '');
         }
         if (def) {
-          const shortKey = canonicalPropertyKey(key);
           const spec = propertySpec(shortKey);
           await repairUpsertPageProperty(result, pageBlockId, key, def, {
             preserveEmpty: (obj.requiredProperties ?? []).map(canonicalPropertyKey).includes(shortKey),
             materializeEmptyNode: String(spec?.type ?? '').toLowerCase() === 'node',
+            currentPageName: pageName,
+            currentPageHints,
           });
         }
       }
@@ -1304,7 +1274,12 @@ async function repairUpsertPageProperty(
   pageBlockId: string,
   property: string,
   value: string,
-  options: { preserveEmpty?: boolean; materializeEmptyNode?: boolean } = {},
+  options: {
+    preserveEmpty?: boolean;
+    materializeEmptyNode?: boolean;
+    currentPageName?: string;
+    currentPageHints?: Set<string>;
+  } = {},
 ): Promise<boolean> {
   if (!property || SKIP_PROMOTE_KEYS.has(property) || property.startsWith('block/')) return false;
   const shortKey = canonicalPropertyKey(property);
@@ -1333,6 +1308,8 @@ async function repairUpsertPageProperty(
     const isNodeRel = (await isDbGraph()) && String(propertySpec(shortKey)?.type ?? '').toLowerCase() === 'node';
     const currentValue = await readCurrentBlockProperty(pageBlockId, shortKey);
     const ownedCurrentValue = isDateProperty(shortKey) ? await readDatascriptUserPropertyValue(pageBlockId, shortKey) : currentValue;
+    const currentPageName = options.currentPageName ?? pageBlockId;
+    const currentPageHints = options.currentPageHints ?? new Set<string>();
     if (isNodeRel && isPlaceholderNodeDefault(value)) {
       await ensurePlaceholderPagesForNodeValue(result, shortKey, value);
       if (isDbPageRefValue(currentValue)) {
@@ -1342,7 +1319,26 @@ async function repairUpsertPageProperty(
     } else if (isNodeRel) {
       await ensurePlaceholderPagesForNodeValue(result, shortKey, value);
     }
-    const upsertValue = await resolveUpsertPropertyValue(shortKey, value);
+    let upsertValue: unknown = await resolveUpsertPropertyValue(shortKey, value);
+    const nodeValueNeedsWrapperRewrite = isNodeRel
+      ? await datascriptNodePropertyHasValueWrapper(pageBlockId, shortKey)
+      : false;
+    if (isNodeRel && currentPageHints.size) {
+      const sanitized = filterSelfPageRefsFromNodeValue(upsertValue, currentPageName, currentPageHints);
+      if (sanitized.removed) {
+        result.notes.push(`Removed self-referential value(s) from ${shortKey} for ${currentPageName}.`);
+      }
+      upsertValue = sanitized.value;
+    }
+    if (isNodeRel && (upsertValue == null || (Array.isArray(upsertValue) && upsertValue.length === 0))) {
+      if (currentValue != null && logseq.Editor.removeBlockProperty) {
+        await logseq.Editor.removeBlockProperty(pageBlockId, shortKey).catch(() => null);
+        result.actions.push(`REMOVED self-referential ${shortKey} on ${currentPageName}`);
+      } else {
+        result.notes.push(`Skipped ${shortKey} for ${currentPageName}; self-reference was the only resolved target.`);
+      }
+      return false;
+    }
     if (isDateProperty(shortKey)) {
       const nextJournalDay = toJournalDay(value);
       if (isValidDatePropertyValue(ownedCurrentValue) && nextJournalDay != null) {
@@ -1353,7 +1349,7 @@ async function repairUpsertPageProperty(
           return false;
         }
       }
-    } else if (propertyValuesEquivalent(ownedCurrentValue, upsertValue, shortKey)) {
+    } else if (!nodeValueNeedsWrapperRewrite && propertyValuesEquivalent(ownedCurrentValue, upsertValue, shortKey)) {
       result.actions.push(`SKIP page property unchanged: ${shortKey}`);
       return false;
     }
@@ -1375,12 +1371,16 @@ async function repairUpsertPageProperty(
     }
     if (
       isNodeRel &&
+      !nodeValueNeedsWrapperRewrite &&
       isDbPageRefValue(upsertValue) &&
       isDbPageRefValue(currentValue) &&
       propertyValuesEquivalent(currentValue, upsertValue, shortKey)
     ) {
       result.actions.push(`SKIP node property already linked: ${shortKey}`);
       return false;
+    }
+    if (nodeValueNeedsWrapperRewrite) {
+      result.actions.push(`REWRITE wrapped node property as page ref: ${shortKey}`);
     }
     const opts = isNodeRel ? ({ reset: true } as const) : undefined;
     await upsertPagePropertyReliable(result, pageBlockId, shortKey, upsertValue, opts);
@@ -1495,5 +1495,6 @@ export async function repairCurrentPage(result: Result, context?: CommandContext
     return;
   }
   result.notes.push(`Materialise raw current-page resolver returned: ${current}.`);
-  await repairSpecificPage(result, current, null, 'current page', { repairLinkedParents: false, maxDashboardQueryViews: 2, dashboardQueryPageSectionHeadings: ['FORMS', 'REVIEWS'], aggregateDashboardQueryPageSectionHeadings: ['FORMS', 'REVIEWS'], allowUntypedBootstrap: true });
+  const materialiseQueryHeadings = [...QUERY_PAGE_SECTION_HEADINGS];
+  await repairSpecificPage(result, current, null, 'current page', { repairLinkedParents: false, maxDashboardQueryViews: materialiseQueryHeadings.length, dashboardQueryPageSectionHeadings: materialiseQueryHeadings, aggregateDashboardQueryPageSectionHeadings: materialiseQueryHeadings, allowUntypedBootstrap: true });
 }
