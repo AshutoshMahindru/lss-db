@@ -16,6 +16,7 @@ import type { Result } from '../core/types';
 import { areaRelationshipPropertiesForObject, normalizeAreaRef, objectByName, propertySpec, registry, templateNameFromRegistry } from '../registry';
 import type { RegistryObject, RegistryTemplate } from '../registry/types';
 import { legacyTemplateText } from './contracts';
+import { orderedPagePropertyNames } from './property-order';
 import { ensurePlaceholderPagesForNodeValue } from './repair-user-properties';
 import {
   advancedDashboardQueryEdnForViewAsync,
@@ -81,27 +82,17 @@ function propertyLineText(prop: TemplateProperty): string {
 
 export function uniqueObjectProps(o: RegistryObject): string[] {
   const seen = new Set<string>();
-  const required: string[] = [];
-  const related: string[] = [];
-  const optional: string[] = [];
-  let deferredRelatedTo = '';
-  const add = (p: string, bucket: string[]) => {
+  const props: string[] = [];
+  const add = (p: string) => {
     if (!p || seen.has(p)) return;
     seen.add(p);
-    if (p === 'related-to') {
-      deferredRelatedTo = p;
-    } else if (p.startsWith('related-')) {
-      related.push(p);
-    } else {
-      bucket.push(p);
-    }
+    props.push(p);
   };
-  for (const p of o.requiredProperties ?? []) add(p, required);
+  for (const p of o.requiredProperties ?? []) add(p);
   for (const p of [...(o.properties ?? []), ...areaRelationshipPropertiesForObject(o)]) {
-    add(p, optional);
+    add(p);
   }
-  if (deferredRelatedTo) related.push(deferredRelatedTo);
-  return [...required, ...related, ...optional];
+  return orderedPagePropertyNames(props, o).filter((property) => property !== 'lss-object-type');
 }
 
 export function placeholderNodePropertyValue(prop: string, spec: { targets?: unknown[] } | undefined): string {
