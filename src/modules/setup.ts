@@ -12,6 +12,7 @@ import {
 import {
   appendManagedBlock,
   blockId,
+  currentPageName,
   ensurePage,
   getPage,
   pageVisibleName,
@@ -45,6 +46,7 @@ import {
   wordEntryContract,
 } from './contracts';
 import { installLegacyTemplates, installNativeTemplates, uniqueObjectProps } from './templates';
+import type { RegistryObject } from '../registry/types';
 
 async function checkPage(missing: string[], canonical: string): Promise<void> {
   const p = pageForCanonical(canonical);
@@ -876,49 +878,101 @@ export async function resetRelatedToNativeProperty(r: Result): Promise<void> {
   await resetNativeNodeProperty(r, 'related-to');
 }
 
-const PRIMARY_DISPLAY_PROPERTIES = new Set(['status', 'Status', 'area', 'areas', 'date']);
+const PRIMARY_DISPLAY_PROPERTIES = new Set(['status', 'Status', 'area', 'areas', 'owner', 'date']);
 
 function specForDisplayProperty(name: string): Record<string, unknown> | null {
   if (name === 'lss-object-type') return { name: 'lss-object-type', type: 'default', cardinality: 'one' };
   return (propertySpec(name) as Record<string, unknown> | undefined) ?? null;
 }
 
-function displayPropertyBeforeRelatedTo(name: string, spec = specForDisplayProperty(name)): boolean {
+function displayPropertyBeforeRelatedTo(name: string, _spec = specForDisplayProperty(name)): boolean {
   const clean = canonicalPropertyKey(name);
   if (!clean || clean === 'related-to') return false;
-  if (PRIMARY_DISPLAY_PROPERTIES.has(clean) || clean === 'owner') return false;
-  if (clean.startsWith('related-')) return true;
-  return String(spec?.type ?? '').toLowerCase() === 'node';
+  return clean.startsWith('related-');
 }
 
-function afterPrimaryDisplayPropertySpecs(): Array<Record<string, unknown>> {
+function relatedDisplayPropertySpecs(object?: RegistryObject, propertyNames?: Iterable<string>): Array<Record<string, unknown>> {
+  const related = new Set<string>();
+  const add = (name: unknown) => {
+    const clean = canonicalPropertyKey(String(name ?? ''));
+    if (displayPropertyBeforeRelatedTo(clean)) related.add(clean);
+  };
+  if (propertyNames) {
+    for (const name of propertyNames) add(name);
+  } else if (object) {
+    for (const name of uniqueObjectProps(object)) add(name);
+  } else {
+    for (const spec of allPropertySpecs()) add(specPropertyName(spec));
+    for (const rel of allRelationships()) add(rel.property);
+    for (const currentObject of allObjects()) for (const name of uniqueObjectProps(currentObject)) add(name);
+  }
+  return [...related].map(specForDisplayProperty).filter((spec): spec is Record<string, unknown> => Boolean(spec));
+}
+
+function afterPrimaryDisplayPropertySpecs(propertyNames?: Iterable<string>): Array<Record<string, unknown>> {
   const afterPrimary = new Set<string>();
-  for (const object of allObjects()) {
-    for (const name of uniqueObjectProps(object).map(canonicalPropertyKey)) {
+  if (propertyNames) {
+    for (const name of [...propertyNames].map(canonicalPropertyKey)) {
       if (!name || PRIMARY_DISPLAY_PROPERTIES.has(name)) continue;
       afterPrimary.add(name);
     }
+  } else {
+    for (const object of allObjects()) {
+      for (const name of uniqueObjectProps(object).map(canonicalPropertyKey)) {
+        if (!name || PRIMARY_DISPLAY_PROPERTIES.has(name)) continue;
+        afterPrimary.add(name);
+      }
+    }
+    afterPrimary.add('lss-object-type');
   }
-  afterPrimary.add('lss-object-type');
   return [...afterPrimary].map(specForDisplayProperty).filter((spec): spec is Record<string, unknown> => Boolean(spec));
 }
 
-function relatedToTrailingDisplayPropertySpecs(): Array<Record<string, unknown>> {
+function objectHasRelatedTo(object: RegistryObject): boolean {
+  return uniqueObjectProps(object).map(canonicalPropertyKey).includes('related-to');
+}
+
+function relatedToTrailingDisplayPropertySpecs(
+  object?: RegistryObject,
+  propertyNames?: Iterable<string>,
+): Array<Record<string, unknown>> {
   const trailing = new Set<string>();
-  for (const object of allObjects()) {
-    const props = uniqueObjectProps(object).map(canonicalPropertyKey);
+  if (propertyNames) {
+    for (const name of [...propertyNames].map(canonicalPropertyKey)) {
+      if (
+        name &&
+        name !== 'related-to' &&
+        !name.startsWith('related-') &&
+        !PRIMARY_DISPLAY_PROPERTIES.has(name)
+      ) {
+        trailing.add(name);
+      }
+    }
+    return [...trailing].map(specForDisplayProperty).filter((spec): spec is Record<string, unknown> => Boolean(spec));
+  }
+  for (const currentObject of object ? [object] : allObjects()) {
+    const props = uniqueObjectProps(currentObject).map(canonicalPropertyKey);
+    const required = new Set((currentObject.requiredProperties ?? []).map(canonicalPropertyKey));
     const relatedToIndex = props.indexOf('related-to');
-    if (relatedToIndex < 0) continue;
-    for (const name of props.slice(relatedToIndex + 1)) {
-      if (name && !name.startsWith('related-')) trailing.add(name);
+    const candidates = relatedToIndex < 0 ? props : props.slice(relatedToIndex + 1);
+    for (const name of candidates) {
+      if (
+        name &&
+        name !== 'related-to' &&
+        !name.startsWith('related-') &&
+        !PRIMARY_DISPLAY_PROPERTIES.has(name) &&
+        !required.has(name)
+      ) {
+        trailing.add(name);
+      }
     }
   }
-  trailing.add('lss-object-type');
+  if (!object) trailing.add('lss-object-type');
 
   return [...trailing].map(specForDisplayProperty).filter((spec): spec is Record<string, unknown> => Boolean(spec));
 }
 
-async function propertiesBeforePrimaryDisplayFields(): Promise<string[]> {
+async function propertiesBeforePrimaryDisplayFields(propertyNames?: Iterable<string>): Promise<string[]> {
   const primaryOrders = [];
   for (const name of PRIMARY_DISPLAY_PROPERTIES) {
     const order = await nativePropertyOrder(name);
@@ -930,7 +984,7 @@ async function propertiesBeforePrimaryDisplayFields(): Promise<string[]> {
   if (!latestPrimaryOrder) return [];
 
   const beforePrimary = [];
-  for (const spec of afterPrimaryDisplayPropertySpecs()) {
+  for (const spec of afterPrimaryDisplayPropertySpecs(propertyNames)) {
     const name = specPropertyName(spec);
     const order = await nativePropertyOrder(name);
     if (order && order < latestPrimaryOrder) beforePrimary.push(name);
@@ -938,17 +992,87 @@ async function propertiesBeforePrimaryDisplayFields(): Promise<string[]> {
   return beforePrimary;
 }
 
-async function relatedPropertiesAfterRelatedTo(): Promise<string[]> {
+function relatedPropertiesBeforeRelatedToSpecs(
+  object?: RegistryObject,
+  propertyNames?: Iterable<string>,
+): Array<Record<string, unknown>> {
+  if (propertyNames) return relatedDisplayPropertySpecs(undefined, propertyNames);
+  if (!object) return relatedDisplayPropertySpecs();
+  const props = uniqueObjectProps(object).map(canonicalPropertyKey);
+  const relatedToIndex = props.indexOf('related-to');
+  if (relatedToIndex < 0) return [];
+  return props
+    .slice(0, relatedToIndex)
+    .filter((name) => displayPropertyBeforeRelatedTo(name))
+    .map(specForDisplayProperty)
+    .filter((spec): spec is Record<string, unknown> => Boolean(spec));
+}
+
+async function relatedPropertiesAfterRelatedTo(object?: RegistryObject, propertyNames?: Iterable<string>): Promise<string[]> {
   const relatedToOrder = await nativePropertyOrder('related-to');
   if (!relatedToOrder) return [];
   const laterSpecific: string[] = [];
-  for (const spec of allPropertySpecs()) {
+  for (const spec of relatedPropertiesBeforeRelatedToSpecs(object, propertyNames)) {
     const name = specPropertyName(spec);
     if (!displayPropertyBeforeRelatedTo(name, spec)) continue;
     const order = await nativePropertyOrder(name);
     if (order && order > relatedToOrder) laterSpecific.push(name);
   }
   return laterSpecific;
+}
+
+async function relatedDisplayClusterOutOfOrder(propertyNames?: Iterable<string>): Promise<string[]> {
+  const relatedToOrder = await nativePropertyOrder('related-to');
+  if (!relatedToOrder) return [];
+  const outOfOrder = new Set<string>();
+  const relatedOrders: string[] = [];
+  for (const spec of relatedDisplayPropertySpecs(undefined, propertyNames)) {
+    const name = specPropertyName(spec);
+    const order = await nativePropertyOrder(name);
+    if (!order) continue;
+    relatedOrders.push(order);
+    if (order > relatedToOrder) outOfOrder.add(name);
+  }
+  relatedOrders.sort();
+  const latestRelatedOrder = relatedOrders[relatedOrders.length - 1];
+  if (!latestRelatedOrder) return [...outOfOrder];
+  for (const spec of relatedToTrailingDisplayPropertySpecs(undefined, propertyNames)) {
+    const name = specPropertyName(spec);
+    const order = await nativePropertyOrder(name);
+    if (order && order < latestRelatedOrder) outOfOrder.add(name);
+  }
+  return [...outOfOrder];
+}
+
+async function currentPageDisplayPropertyNames(r: Result): Promise<Set<string> | null> {
+  const pageName = await currentPageName().catch(() => null);
+  if (!pageName) {
+    r.notes.push('No current page detected; related display order repair will use registry-wide ordering.');
+    return null;
+  }
+  const page = (await resolvePageFromIdentity(pageName)) || (await getPage(pageName));
+  const pageBlockId = blockId(page);
+  const names = new Set<string>();
+  const addSource = (source: Record<string, unknown> | null | undefined) => {
+    if (!source) return;
+    for (const key of Object.keys(source)) {
+      const clean = canonicalPropertyKey(key);
+      if (clean && clean !== 'tags' && !clean.startsWith('block/') && !clean.startsWith('logseq.property/')) names.add(clean);
+    }
+  };
+  addSource((page?.properties as Record<string, unknown> | undefined) ?? undefined);
+  if (logseq.Editor.getPageProperties) {
+    addSource(((await logseq.Editor.getPageProperties(pageName).catch(() => null)) ?? null) as Record<string, unknown> | null);
+  }
+  if (pageBlockId && logseq.Editor.getBlockProperties) {
+    addSource(((await logseq.Editor.getBlockProperties(pageBlockId).catch(() => null)) ?? null) as Record<string, unknown> | null);
+  }
+  if (!names.size) {
+    r.notes.push(`No page properties detected on ${pageName}; related display order repair will use registry-wide ordering.`);
+    return null;
+  }
+  r.notes.push(`Scoping related display order repair to current page ${pageName}: ${[...names].sort().join(', ')}.`);
+  return names;
 }
 
 async function repairStaleNativeNodePropertySchemas(r: Result): Promise<string[]> {
@@ -976,7 +1100,8 @@ export async function repairRelatedToDisplayOrder(r: Result): Promise<void> {
     r.notes.push('repair-related-to-display-order applies only to DB graphs.');
     return;
   }
-  await repairStaleNativeNodePropertySchemas(r);
+  const currentPageProperties = await currentPageDisplayPropertyNames(r);
+  r.notes.push('Skipped stale native node schema repair; run LSS: Reset Stale Node Properties separately if schema repair is required.');
   const initialRelatedToOrder = await nativePropertyOrder('related-to');
   if (!initialRelatedToOrder) {
     const spec = propertySpec('related-to');
@@ -987,10 +1112,10 @@ export async function repairRelatedToDisplayOrder(r: Result): Promise<void> {
     await resetNativePropertyDefinition(r, spec);
   }
 
-  const beforePrimary = await propertiesBeforePrimaryDisplayFields();
+  const beforePrimary = await propertiesBeforePrimaryDisplayFields(currentPageProperties ?? undefined);
   if (beforePrimary.length) {
     r.notes.push(`Repairing canonical display order after primary field(s): ${beforePrimary.join(', ')}.`);
-    for (const spec of afterPrimaryDisplayPropertySpecs()) {
+    for (const spec of afterPrimaryDisplayPropertySpecs(currentPageProperties ?? undefined)) {
       const name = specPropertyName(spec);
       if (!beforePrimary.includes(name)) continue;
       await resetNativePropertyDefinition(r, spec);
@@ -998,14 +1123,25 @@ export async function repairRelatedToDisplayOrder(r: Result): Promise<void> {
     }
   }
 
-  const laterSpecific = await relatedPropertiesAfterRelatedTo();
-  if (laterSpecific.length) {
-    r.notes.push(`Repairing related-to order after specific related field(s): ${laterSpecific.join(', ')}.`);
+  const mixedRelatedCluster = [
+    ...new Set([
+      ...(await relatedPropertiesAfterRelatedTo(undefined, currentPageProperties ?? undefined)),
+      ...(await relatedDisplayClusterOutOfOrder(currentPageProperties ?? undefined)),
+    ]),
+  ];
+  if (mixedRelatedCluster.length) {
+    r.notes.push(
+      `Repairing related display order so specific related field(s) render immediately before related-to: ${mixedRelatedCluster.join(', ')}.`,
+    );
+    for (const spec of relatedDisplayPropertySpecs(undefined, currentPageProperties ?? undefined)) {
+      await resetNativePropertyDefinition(r, spec);
+      await sleep(150);
+    }
     await resetRelatedToNativeProperty(r);
     await sleep(150);
   }
 
-  for (const spec of relatedToTrailingDisplayPropertySpecs()) {
+  for (const spec of relatedToTrailingDisplayPropertySpecs(undefined, currentPageProperties ?? undefined)) {
     const name = specPropertyName(spec);
     const relatedToOrder = await nativePropertyOrder('related-to');
     const order = await nativePropertyOrder(name);
@@ -1029,14 +1165,15 @@ export async function resetStaleNativeNodeProperties(r: Result): Promise<void> {
   if (staleProperties.length) r.notes.push(`Resetting stale native node property schema(s): ${staleProperties.join(', ')}.`);
 }
 
-export async function ensureRelatedToPropertyOrder(r: Result): Promise<void> {
+export async function ensureRelatedToPropertyOrder(r: Result, object?: RegistryObject): Promise<void> {
+  if (object && !objectHasRelatedTo(object)) return;
   const relatedToOrder = await nativePropertyOrder('related-to');
   if (!relatedToOrder) {
     r.notes.push('related-to property order check skipped: property order unavailable from Logseq APIs.');
     return;
   }
   const laterSpecific = [];
-  for (const spec of allPropertySpecs()) {
+  for (const spec of relatedPropertiesBeforeRelatedToSpecs(object)) {
     const name = specPropertyName(spec);
     if (!displayPropertyBeforeRelatedTo(name, spec)) continue;
     const order = await nativePropertyOrder(name);
@@ -1056,11 +1193,12 @@ export async function ensurePrimaryDisplayPropertyOrder(r: Result): Promise<void
   );
 }
 
-export async function ensureRelatedToBeforeTrailingAdminProperties(r: Result): Promise<void> {
+export async function ensureRelatedToBeforeTrailingAdminProperties(r: Result, object?: RegistryObject): Promise<void> {
+  if (object && !objectHasRelatedTo(object)) return;
   const relatedToOrder = await nativePropertyOrder('related-to');
   if (!relatedToOrder) return;
   const trailingBeforeRelatedTo = [];
-  for (const spec of relatedToTrailingDisplayPropertySpecs()) {
+  for (const spec of relatedToTrailingDisplayPropertySpecs(object)) {
     const name = specPropertyName(spec);
     const order = await nativePropertyOrder(name);
     if (order && order < relatedToOrder) trailingBeforeRelatedTo.push(name);

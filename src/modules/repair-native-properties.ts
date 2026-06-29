@@ -6,7 +6,6 @@ import {
 import type { Result } from '../core/types';
 import { propertySpec } from '../registry';
 import type { RegistryObject } from '../registry/types';
-import { repairNativeNodePropertySchemaInPlace } from './setup';
 import { uniqueObjectProps } from './templates';
 
 const nativeEnsureCache = new Set<string>();
@@ -18,8 +17,9 @@ async function ensureCachedNativeProperty(result: Result, key: string): Promise<
   if (!spec) return;
   const resetReason = await nativePropertyResetReasonForSpec(spec);
   if (resetReason) {
-    result.notes.push(`Native property ${shortKey}: stale schema detected (${resetReason}).`);
-    await repairNativeNodePropertySchemaInPlace(result, spec as Record<string, unknown>);
+    result.notes.push(
+      `Native property ${shortKey}: stale schema detected (${resetReason}); auto/materialise left schema unchanged. Run LSS: Reset Stale Node Properties or LSS: Repair Related-To Display Order when ready for an explicit maintenance pass.`,
+    );
     nativeEnsureCache.add(shortKey);
     return;
   }

@@ -71,7 +71,7 @@ export const COMMAND_HELP: CommandHelpLine[] = [
   { id: '54', label: 'lss: 54clean-native-tag-schema-properties', description: 'Remove LSS registry schema properties from native tag property lists and write a concise cleanup report.' },
   { id: '55', label: 'lss: 55reset-related-to-property-order', description: 'Reset and restore related-to so existing graphs place it after specific related fields.' },
   { id: '56', label: 'lss: 56reset-stale-node-properties', description: 'Repair and restore stale LSS native node-property schemas in place where possible.' },
-  { id: '57', label: 'lss: 57repair-related-to-display-order', description: 'Repair stale native property meta, then place specific related fields before related-to and admin fields after it.' },
+  { id: '57', label: 'lss: 57repair-related-to-display-order', description: 'Place current-page specific related fields before related-to and admin fields after it.' },
 ];
 
 export function registryCommandHelp(): CommandHelpLine[] {
@@ -464,7 +464,7 @@ export async function createHelpPage(r: Result): Promise<void> {
     '- Commands 33-44 update, audit, export, or snapshot existing pages.',
     '- Commands 46-49 create navigation, area-model, command-list, and layer-home pages.',
     '- `lss: materialise page` is the primary page materialization and repair command.',
-    '- `lss: 57repair-related-to-display-order` repairs existing DB property meta and display order after older setup runs.',
+    '- `lss: 57repair-related-to-display-order` repairs current-page related display order after older setup runs.',
     '- Commands intentionally use flat-safe scaffold page names to avoid namespace parent errors.',
     '- Spec aliases such as `LSS: Initialize Schema` map to the same handlers as numbered commands.',
   ].join('\n');

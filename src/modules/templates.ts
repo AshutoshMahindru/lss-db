@@ -81,36 +81,27 @@ function propertyLineText(prop: TemplateProperty): string {
 
 export function uniqueObjectProps(o: RegistryObject): string[] {
   const seen = new Set<string>();
-  const primary: string[] = [];
+  const required: string[] = [];
   const related: string[] = [];
-  const trailing: string[] = [];
+  const optional: string[] = [];
   let deferredRelatedTo = '';
-  const primaryBeforeRelatedTo = (p: string) => ['status', 'Status', 'area', 'areas', 'date'].includes(p);
-  const beforeRelatedTo = (p: string) => {
-    if (p.startsWith('related-')) return true;
-    if (p === 'owner' || p === 'area' || p === 'areas') return false;
-    const spec = propertySpec(p);
-    return String(spec?.type ?? '').toLowerCase() === 'node';
-  };
-  const add = (p: string) => {
+  const add = (p: string, bucket: string[]) => {
     if (!p || seen.has(p)) return;
     seen.add(p);
     if (p === 'related-to') {
       deferredRelatedTo = p;
-    } else if (primaryBeforeRelatedTo(p)) {
-      primary.push(p);
-    } else if (beforeRelatedTo(p)) {
+    } else if (p.startsWith('related-')) {
       related.push(p);
     } else {
-      trailing.push(p);
+      bucket.push(p);
     }
   };
-  for (const p of o.requiredProperties ?? []) add(p);
+  for (const p of o.requiredProperties ?? []) add(p, required);
   for (const p of [...(o.properties ?? []), ...areaRelationshipPropertiesForObject(o)]) {
-    add(p);
+    add(p, optional);
   }
   if (deferredRelatedTo) related.push(deferredRelatedTo);
-  return [...primary, ...related, ...trailing];
+  return [...required, ...related, ...optional];
 }
 
 export function placeholderNodePropertyValue(prop: string, spec: { targets?: unknown[] } | undefined): string {

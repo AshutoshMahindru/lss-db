@@ -272,10 +272,10 @@ function materializePageShape(object) {
     'edn',
   ]);
   for (const heading of queryHeadings) {
-    const headingId = queryPageChildId(page, heading);
+    const headingId = ensurePageChild(page, heading);
     if (!headingId) throw new Error(`missing materialized heading "${heading}" on "${page}"`);
     const title = `${heading} query`;
-    const queryBlockId = queryDirectChildId(headingId, title);
+    const queryBlockId = ensureBlockChild(headingId, title);
     if (!queryBlockId) throw new Error(`missing materialized query block "${title}" on "${page}"`);
     runLogseq([
       'upsert',

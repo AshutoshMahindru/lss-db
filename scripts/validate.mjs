@@ -176,48 +176,39 @@ for (const object of allObjects) {
     if (!propertyByName.has(property)) fail(`${object.name} references unknown property ${property}`);
   }
 }
-const primaryBeforeRelatedToProperties = new Set(['status', 'Status', 'area', 'areas', 'date']);
-function relationshipBeforeRelatedTo(property) {
-  if (String(property).startsWith('related-')) return true;
-  if (property === 'owner' || property === 'area' || property === 'areas') return false;
-  const spec = propertyByName.get(property);
-  return String(spec?.type ?? '').toLowerCase() === 'node';
-}
 function canonicalObjectPropertyOrder(object) {
   const seen = new Set();
-  const primary = [];
+  const required = [];
   const related = [];
-  const trailing = [];
+  const optional = [];
   let deferredRelatedTo = '';
-  const add = (property) => {
+  const add = (property, bucket) => {
     if (!property || seen.has(property)) return;
     seen.add(property);
     if (property === 'related-to') {
       deferredRelatedTo = property;
-    } else if (primaryBeforeRelatedToProperties.has(property)) {
-      primary.push(property);
-    } else if (relationshipBeforeRelatedTo(property)) {
+    } else if (String(property).startsWith('related-')) {
       related.push(property);
     } else {
-      trailing.push(property);
+      bucket.push(property);
     }
   };
-  for (const property of object.requiredProperties ?? []) add(property);
-  for (const property of object.properties ?? []) add(property);
+  for (const property of object.requiredProperties ?? []) add(property, required);
+  for (const property of object.properties ?? []) add(property, optional);
   if (deferredRelatedTo) related.push(deferredRelatedTo);
-  return [...primary, ...related, ...trailing];
+  return [...required, ...related, ...optional];
 }
 for (const object of allObjects) {
   const props = canonicalObjectPropertyOrder(object);
   const relatedToIndex = props.indexOf('related-to');
   if (relatedToIndex < 0) continue;
   for (const property of props.slice(0, relatedToIndex)) {
-    if (!primaryBeforeRelatedToProperties.has(property) && !relationshipBeforeRelatedTo(property)) {
+    if (!(object.requiredProperties ?? []).includes(property) && !String(property).startsWith('related-')) {
       fail(`${object.name} places ${property} before related-to`);
     }
   }
   for (const property of props.slice(relatedToIndex + 1)) {
-    if (relationshipBeforeRelatedTo(property)) fail(`${object.name} places relationship field ${property} after related-to`);
+    if (String(property).startsWith('related-')) fail(`${object.name} places specific related field ${property} after related-to`);
   }
 }
 const interaction = allObjects.find((object) => object.name === 'Interaction');
@@ -278,16 +269,13 @@ if (
   fail('registry must generate named same-area relationship fields for page materialisation and native setup');
 }
 if (
+  !templatesSource.includes('const required: string[] = []') ||
   !templatesSource.includes('const related: string[] = []') ||
-  !templatesSource.includes('const trailing: string[] = []') ||
-  !templatesSource.includes('const primaryBeforeRelatedTo = (p: string)') ||
-  !templatesSource.includes('const beforeRelatedTo = (p: string)') ||
+  !templatesSource.includes('const optional: string[] = []') ||
   !templatesSource.includes("if (p === 'related-to')") ||
-  !templatesSource.includes('primaryBeforeRelatedTo(p)') ||
   !templatesSource.includes("p.startsWith('related-')") ||
-  !templatesSource.includes("String(spec?.type ?? '').toLowerCase() === 'node'") ||
   !templatesSource.includes('if (deferredRelatedTo) related.push(deferredRelatedTo)') ||
-  !templatesSource.includes('return [...primary, ...related, ...trailing]')
+  !templatesSource.includes('return [...required, ...related, ...optional]')
 ) {
   fail('generic related-to must be ordered after specific related fields and before trailing optional fields');
 }
@@ -315,8 +303,13 @@ if (
   !setupSource.includes('propertiesBeforePrimaryDisplayFields') ||
   !setupSource.includes('ensureRelatedToBeforeTrailingAdminProperties') ||
   !setupSource.includes('displayPropertyBeforeRelatedTo') ||
+  !setupSource.includes('relatedDisplayPropertySpecs') ||
+  !setupSource.includes('relatedDisplayClusterOutOfOrder') ||
+  !setupSource.includes('currentPageDisplayPropertyNames') ||
   !setupSource.includes('relatedToTrailingDisplayPropertySpecs') ||
   !setupSource.includes('afterPrimaryDisplayPropertySpecs') ||
+  !setupSource.includes('for (const rel of allRelationships()) add(rel.property)') ||
+  !setupSource.includes("PRIMARY_DISPLAY_PROPERTIES.has(name)") ||
   !setupSource.includes('const relatedToIndex = props.indexOf') ||
   !setupSource.includes("trailing.add('lss-object-type')") ||
   !setupSource.includes('const isDate = String(spec.type ??') ||
@@ -333,15 +326,26 @@ if (
   !setupSource.includes('schema repair changed property order') ||
   !setupSource.includes("clean.startsWith('related-')") ||
   !setupSource.includes("displayPropertyBeforeRelatedTo(name, spec)") ||
+  !setupSource.includes('Repairing related display order so specific related field(s) render immediately before related-to') ||
+  !setupSource.includes('Skipped stale native node schema repair') ||
   !setupSource.includes('repairRelatedToDisplayOrder') ||
-  !repairSource.includes('ensureRelatedToPropertyOrder(result)') ||
-  !repairSource.includes('ensureRelatedToBeforeTrailingAdminProperties(result)') ||
+  !repairSource.includes('ensureRelatedToPropertyOrder(result, obj)') ||
+  !repairSource.includes('ensureRelatedToBeforeTrailingAdminProperties(result, obj)') ||
   !registerSource.includes('lss: 55reset-related-to-property-order') ||
   !navigationSource.includes('lss: 55reset-related-to-property-order') ||
   !registerSource.includes('lss: 57repair-related-to-display-order') ||
   !navigationSource.includes('lss: 57repair-related-to-display-order')
 ) {
   fail('existing graphs need a plugin-side related-to property order reset command');
+}
+const repairRelatedToStart = setupSource.indexOf('export async function repairRelatedToDisplayOrder');
+const resetStaleStart = setupSource.indexOf('export async function resetStaleNativeNodeProperties');
+if (repairRelatedToStart < 0 || resetStaleStart < 0) {
+  fail('setup must expose related display order and stale schema repair commands separately');
+}
+const repairRelatedToBody = setupSource.slice(repairRelatedToStart, resetStaleStart);
+if (repairRelatedToBody.includes('repairStaleNativeNodePropertySchemas(r)')) {
+  fail('related display order repair must not run stale native schema repair');
 }
 if (
   setupStep10Source.includes('resetRelatedToNativeProperty') ||
@@ -586,9 +590,12 @@ if (
   !repairNativePropertiesSource.includes('nativeEnsureCache') ||
   repairNativePropertiesSource.includes('resetNativeNodeProperty') ||
   repairNativePropertiesSource.includes('resetNativePropertyDefinition') ||
-  !repairNativePropertiesSource.includes('repairNativeNodePropertySchemaInPlace')
+  repairNativePropertiesSource.includes('repairNativeNodePropertySchemaInPlace') ||
+  !repairNativePropertiesSource.includes('auto/materialise left schema unchanged') ||
+  !repairNativePropertiesSource.includes('Reset Stale Node Properties') ||
+  !repairNativePropertiesSource.includes('Repair Related-To Display Order')
 ) {
-  fail('materialise must cache native property setup checks and use only in-place stale-schema repair');
+  fail('materialise must cache native property setup checks and leave stale-schema repair to explicit maintenance commands');
 }
 if (
   !repairDashboardSource.includes('isPlaceholderPageRef') ||
@@ -601,6 +608,14 @@ if (
   !repairSource.includes('lss: materialise page is scoped to the selected page')
 ) {
   fail('lss: materialise page must not cascade into linked parent dashboard repairs');
+}
+if (
+  !repairSource.includes('shouldSkipPromoteProperty') ||
+  !repairSource.includes("key.startsWith('logseq.property/')") ||
+  !repairSource.includes('filter(([prop]) => !shouldSkipPromoteProperty(prop))') ||
+  !repairSource.includes('if (shouldSkipPromoteProperty(property)) return false')
+) {
+  fail('repair/materialise must not promote Logseq schema metadata as page properties');
 }
 if (
   !editorSource.includes('CurrentPageNameOptions') ||

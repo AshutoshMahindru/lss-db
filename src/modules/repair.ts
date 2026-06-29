@@ -208,7 +208,7 @@ function defaultUntypedMaterialiseObjectType(pageName: string, props: Map<string
 
 const RELATIONSHIP_PROPERTIES = new Set(relationshipPropertyNames());
 const SKIP_PROMOTE_KEYS = new Set(['tags', 'block/tags']);
-
+const shouldSkipPromoteProperty = (property: string): boolean => { const key = canonicalPropertyKey(property); return !key || SKIP_PROMOTE_KEYS.has(key) || key.startsWith('block/') || key.startsWith('logseq.property/'); };
 function relationshipNamesFromRepairValue(value: string): string[] {
   const text = String(value ?? '').trim();
   if (!text) return [];
@@ -983,8 +983,8 @@ async function repairPageCore(
     const obj = objectByName(inferredType);
     if (obj) {
       await ensureMaterialiseNativeProperties(result, obj);
-      await ensureRelatedToPropertyOrder(result);
-      await ensureRelatedToBeforeTrailingAdminProperties(result);
+      await ensureRelatedToPropertyOrder(result, obj);
+      await ensureRelatedToBeforeTrailingAdminProperties(result, obj);
       await applyInstanceHintTagsToProps(result, obj, props, instanceHints, pageName);
       for (const key of uniqueObjectProps(obj)) {
         const shortKey = canonicalPropertyKey(key);
@@ -1064,8 +1064,7 @@ async function repairPageCore(
   for (const tag of resolvedTags) {
     await repairApplyTagToPage(result, pageBlockId, tag, pageName, currentPageHints);
   }
-  const propEntries = [...props.entries()]
-    .filter(([prop]) => !SKIP_PROMOTE_KEYS.has(prop) && !prop.startsWith('block/'))
+  const propEntries = [...props.entries()].filter(([prop]) => !shouldSkipPromoteProperty(prop))
     .sort(([a], [b]) => {
       const aDate = isDateProperty(a) ? 0 : 1;
       const bDate = isDateProperty(b) ? 0 : 1;
@@ -1281,7 +1280,7 @@ async function repairUpsertPageProperty(
     currentPageHints?: Set<string>;
   } = {},
 ): Promise<boolean> {
-  if (!property || SKIP_PROMOTE_KEYS.has(property) || property.startsWith('block/')) return false;
+  if (shouldSkipPromoteProperty(property)) return false;
   const shortKey = canonicalPropertyKey(property);
   if (!String(value ?? '').trim()) {
     const currentValue = await readCurrentBlockProperty(pageBlockId, shortKey);
