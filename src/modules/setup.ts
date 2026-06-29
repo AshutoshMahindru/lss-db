@@ -5,6 +5,7 @@ import {
   entityIdentity,
   getCanonicalProp,
   isPluginPropertyOwnershipError,
+  nativePropertySchema,
   nativePropertyResetReasonForSpec,
   pluginPropertyIdent,
   resolveUpsertPropertyValue,
@@ -1043,6 +1044,105 @@ type CurrentPageDisplayPropertyContext = {
   object?: RegistryObject;
 };
 
+type HostWithImportEdn = Window & {
+  logseq?: {
+    api?: {
+      import_edn?: (payload: string) => Promise<void> | void;
+    };
+  };
+};
+
+function getHostWindowForImport(): HostWithImportEdn | null {
+  const candidates: unknown[] = [
+    globalThis,
+    typeof window !== 'undefined' ? window : null,
+    typeof window !== 'undefined' ? window.parent : null,
+    typeof window !== 'undefined' ? window.top : null,
+  ];
+  for (const candidate of candidates) {
+    const host = candidate as HostWithImportEdn | null;
+    if (host?.logseq?.api?.import_edn) return host;
+  }
+  return null;
+}
+
+function transitKeyword(keyword: string): string {
+  const raw = String(keyword ?? '').trim();
+  return raw.startsWith(':') ? `~${raw}` : `~:${raw}`;
+}
+
+function transitMap(entries: Array<[string, unknown]>): unknown[] {
+  const out: unknown[] = ['^ '];
+  for (const [key, value] of entries) {
+    out.push(transitKeyword(key), value);
+  }
+  return out;
+}
+
+function transitPropertyValueType(type: unknown): string {
+  const raw = String(type ?? 'default').toLowerCase();
+  if (['node', 'date', 'url', 'number', 'checkbox'].includes(raw)) return raw;
+  return 'default';
+}
+
+function transitPropertyCardinality(cardinality: unknown): string {
+  return String(cardinality ?? 'one').toLowerCase() === 'many' ? 'db.cardinality/many' : 'db.cardinality/one';
+}
+
+function canonicalDisplayOrderPropertySpecs(): Array<Record<string, unknown>> {
+  const byName = new Map<string, Record<string, unknown>>();
+  for (const spec of displayPropertyOrderSpecs()) {
+    const name = canonicalPropertyKey(specPropertyName(spec));
+    if (name && !byName.has(name)) byName.set(name, spec);
+  }
+  return [...byName.values()];
+}
+
+function validDisplayOrderKey(index: number): string {
+  const digits = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+  if (index < digits.length) return `a${digits[index]}`;
+  const offset = index - digits.length;
+  return `b${digits[Math.floor(offset / digits.length)]}${digits[offset % digits.length]}`;
+}
+
+function nativeDisplayOrderImportPayload(): string {
+  const propertyEntries: Array<[string, unknown]> = [];
+  for (const [index, spec] of canonicalDisplayOrderPropertySpecs().entries()) {
+    const name = canonicalPropertyKey(specPropertyName(spec));
+    if (!name) continue;
+    const schema = nativePropertySchema(spec);
+    propertyEntries.push([
+      pluginPropertyIdent(name),
+      transitMap([
+        [':block/title', name],
+        [':block/order', validDisplayOrderKey(index)],
+        [':logseq.property/type', transitKeyword(transitPropertyValueType(schema.type))],
+        [':db/cardinality', transitKeyword(transitPropertyCardinality(schema.cardinality))],
+        [':logseq.property/hide?', false],
+      ]),
+    ]);
+  }
+  return JSON.stringify(transitMap([[':properties', transitMap(propertyEntries)]]));
+}
+
+async function importNativeDisplayOrder(r: Result): Promise<boolean> {
+  const host = getHostWindowForImport();
+  const importEdn = host?.logseq?.api?.import_edn;
+  if (!importEdn) {
+    r.notes.push('Native property order import unavailable; host logseq.api.import_edn is not exposed.');
+    return false;
+  }
+  try {
+    await importEdn(nativeDisplayOrderImportPayload());
+    await sleep(500);
+    r.actions.push('REORDER native page property display metadata: lss-object-type, area, area relations, owner, related-to, other fields, status');
+    return true;
+  } catch (error) {
+    r.errors.push(`native property display order import failed: ${formatError(error)}`);
+    return false;
+  }
+}
+
 async function currentPageDisplayPropertyNames(r: Result): Promise<CurrentPageDisplayPropertyContext | null> {
   const pageName = await currentPageName().catch(() => null);
   if (!pageName) {
@@ -1139,11 +1239,9 @@ export async function repairRelatedToDisplayOrder(r: Result): Promise<void> {
   const displayRepairNeeded = [...new Set([...displayOutOfOrder, ...mixedRelatedCluster])];
   if (displayRepairNeeded.length) {
     r.notes.push(
-      `Page property display order differs from requested order (${displayRepairNeeded.join(', ')}): lss-object-type, area, area relations, related-to, other fields, status.`,
+      `Page property display order differs from requested order (${displayRepairNeeded.join(', ')}): lss-object-type, area, area relations, owner, related-to, other fields, status.`,
     );
-    r.notes.push(
-      'Skipped native property definition reset because Logseq removes graph-wide property values during remove/recreate; existing page values were left unchanged.',
-    );
+    await importNativeDisplayOrder(r);
   }
 
   await ensureRelatedToPropertyOrder(r);
@@ -1176,7 +1274,7 @@ export async function ensureRelatedToPropertyOrder(r: Result, object?: RegistryO
   }
   if (!laterSpecific.length) return;
   r.notes.push(
-    `related-to property order is before specific related field(s): ${laterSpecific.join(', ')}; setup left native property definitions unchanged.`,
+    `related-to property order is before canonical preceding field(s): ${laterSpecific.join(', ')}; setup left native property definitions unchanged.`,
   );
 }
 

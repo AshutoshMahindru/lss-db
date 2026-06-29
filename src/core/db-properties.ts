@@ -745,6 +745,8 @@ export async function resolveUpsertPropertyValue(property: string, value: string
 
   if (type !== 'node') return value;
 
+  if (!String(value ?? '').trim()) return null;
+
   const ids = await resolveNodePropertyIds(value);
   const cardinality = String((spec as { cardinality?: string } | undefined)?.cardinality ?? '').toLowerCase();
   if (!ids.length) {

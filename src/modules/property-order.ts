@@ -4,6 +4,7 @@ import { normalizeAreaRef, propertySpec, registry } from '../registry';
 import type { RegistryObject } from '../registry/types';
 
 const AREA_PROPERTIES = new Set(['area', 'areas']);
+const OWNER_PROPERTIES = new Set(['owner']);
 const STATUS_PROPERTIES = new Set(['status']);
 
 function propertyTargets(property: string): string[] {
@@ -31,10 +32,11 @@ function pagePropertyOrderRank(property: string, object?: RegistryObject): [numb
   const clean = canonicalPropertyKey(property);
   if (clean === 'lss-object-type') return [0, 0];
   if (AREA_PROPERTIES.has(clean)) return [1, clean === 'area' ? 0 : 1];
+  if (OWNER_PROPERTIES.has(clean)) return [3, 0];
   const relationRank = areaRelationRank(clean, object);
   if (relationRank != null) return [2, relationRank];
   if (clean.startsWith('related-') && clean !== 'related-to') return [2, 10000];
-  if (clean === 'related-to') return [3, 0];
+  if (clean === 'related-to') return [3, 1];
   if (STATUS_PROPERTIES.has(clean)) return [5, 0];
   return [4, 0];
 }

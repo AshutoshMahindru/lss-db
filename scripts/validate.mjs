@@ -59,6 +59,7 @@ const areas = requireArray('areas');
 const entityTypes = requireArray('entityTypes');
 const formTypes = requireArray('formTypes');
 const wordExtenderTypes = requireArray('wordExtenderTypes');
+const entityAndFormNames = new Set([...entityTypes, ...formTypes].map((object) => object.name));
 requireArray('relationshipRegistry');
 const propertyRegistry = requireArray('propertyRegistry');
 requireArray('templates');
@@ -200,15 +201,17 @@ function canonicalObjectPropertyOrder(object) {
   };
   const rank = (property) => {
     if (property === 'area' || property === 'areas') return [1, property === 'area' ? 0 : 1];
+    if (property === 'owner') return [3, 0];
     const relationRank = targetRank(property);
     if (relationRank != null) return [2, relationRank];
     if (String(property).startsWith('related-') && property !== 'related-to') return [2, 10000];
-    if (property === 'related-to') return [3, 0];
+    if (property === 'related-to') return [3, 1];
     if (property === 'status') return [5, 0];
     return [4, 0];
   };
   for (const property of object.requiredProperties ?? []) add(property);
   for (const property of object.properties ?? []) add(property);
+  if (entityAndFormNames.has(object.name)) add('related-to');
   return props
     .map((property, index) => ({ property, index, rank: rank(property) }))
     .sort((a, b) => a.rank[0] - b.rank[0] || a.rank[1] - b.rank[1] || a.index - b.index)
@@ -217,7 +220,10 @@ function canonicalObjectPropertyOrder(object) {
 for (const object of allObjects) {
   const props = canonicalObjectPropertyOrder(object);
   const relatedToIndex = props.indexOf('related-to');
+  const ownerIndex = props.indexOf('owner');
   const statusIndex = props.indexOf('status');
+  if (entityAndFormNames.has(object.name) && relatedToIndex < 0) fail(`${object.name} must include related-to`);
+  if (ownerIndex >= 0 && relatedToIndex !== ownerIndex + 1) fail(`${object.name} must place related-to immediately after owner`);
   if (statusIndex >= 0 && statusIndex !== props.length - 1) fail(`${object.name} must place status last`);
   const areaIndex = props.indexOf('area');
   if (areaIndex >= 0 && areaIndex !== 0) fail(`${object.name} must place area before object-specific relations`);
@@ -286,15 +292,29 @@ if (
 }
 if (
   !templatesSource.includes("out.push({ key: 'lss-object-type', value: obj.name })") ||
+  !templatesSource.includes("if (objectGetsGenericRelatedTo(o)) add('related-to')") ||
+  !templatesSource.includes("if (p === 'related-to') return ''") ||
   !templatesSource.includes('orderedPagePropertyNames(props, o)') ||
   !propertyOrderSource.includes("if (clean === 'lss-object-type') return [0, 0]") ||
   !propertyOrderSource.includes('if (AREA_PROPERTIES.has(clean)) return [1') ||
   !propertyOrderSource.includes("clean.startsWith('related-') && clean !== 'related-to'") ||
-  !propertyOrderSource.includes("if (clean === 'related-to') return [3, 0]") ||
+  !propertyOrderSource.includes('OWNER_PROPERTIES') ||
+  !propertyOrderSource.includes("if (clean === 'related-to') return [3, 1]") ||
   !propertyOrderSource.includes('if (STATUS_PROPERTIES.has(clean)) return [5, 0]') ||
   !propertyOrderSource.includes('areaRelationRank(clean, object)')
 ) {
-  fail('page properties must order lss-object-type, area, hierarchy relations, related-to, other fields, then status');
+  fail('page properties must order lss-object-type, area, hierarchy relations, owner, related-to, other fields, then status');
+}
+if (
+  !createSource.includes("import { uniqueObjectProps } from './templates'") ||
+  createSource.includes('function uniqueProps') ||
+  !createSource.includes('const objectProps = new Set(uniqueObjectProps(o))') ||
+  !createSource.includes('const props = uniqueObjectProps(o)') ||
+  !createSource.includes('for (const p of uniqueObjectProps(o))') ||
+  !createSource.includes("if (p === 'related-to') return ''") ||
+  !dbPropertiesSource.includes("if (!String(value ?? '').trim()) return null")
+) {
+  fail('creation must use the shared canonical object property order and skip blank related-to node writes');
 }
 if (
   !contractsSource.includes("import { uniqueObjectProps } from './templates'") ||
@@ -343,7 +363,7 @@ if (
   !setupSource.includes('schema repair changed property order') ||
   !setupSource.includes('pagePropertyComesBeforeRelatedTo') ||
   !setupSource.includes('orderedPagePropertyNames') ||
-  !setupSource.includes('lss-object-type, area, area relations, related-to, other fields, status') ||
+  !setupSource.includes('lss-object-type, area, area relations, owner, related-to, other fields, status') ||
   !setupSource.includes('Skipped stale native node schema repair') ||
   !setupSource.includes('repairRelatedToDisplayOrder') ||
   !repairSource.includes('ensureRelatedToPropertyOrder(result, obj)') ||

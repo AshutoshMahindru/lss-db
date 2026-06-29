@@ -14,6 +14,16 @@ const objects = [...entityTypes, ...formTypes];
 const templates = rawRegistry.templates ?? [];
 const queryHeadings = ['RELATED ENTITIES', 'GENERIC ENTITIES', 'FORMS', 'REVIEWS', 'DATES'];
 const allHeadings = ['NATIVE SECTIONS', ...queryHeadings];
+const entityAndFormNames = new Set(objects.map((object) => object.name));
+const hierarchyRelated = new Map([
+  ['related-area', 0],
+  ['related-function', 1],
+  ['related-project', 2],
+  ['related-workstream', 3],
+  ['related-team', 4],
+  ['related-venture', 5],
+  ['related-proposal', 6],
+]);
 
 function runLogseq(args, options = {}) {
   const result = spawnSync('logseq', ['-g', graph, ...args], {
@@ -48,6 +58,98 @@ function pageProperties(object, kind) {
     `:lss-verify-kind ${ednString(kind)}`,
     ':status "active"',
   ].join(', ');
+}
+
+function canonicalPropertyKey(value) {
+  return String(value ?? '').trim().replace(/^:+/, '');
+}
+
+function pagePropertyOrderRank(property) {
+  const clean = canonicalPropertyKey(property);
+  if (clean === 'lss-object-type') return [0, 0, clean];
+  if (clean === 'area' || clean === 'areas') return [1, clean === 'area' ? 0 : 1, clean];
+  if (hierarchyRelated.has(clean)) return [2, hierarchyRelated.get(clean), clean];
+  if (clean.startsWith('related-') && clean !== 'related-to') return [2, 100, clean];
+  if (clean === 'owner') return [3, 0, clean];
+  if (clean === 'related-to') return [3, 1, clean];
+  if (clean === 'status') return [5, 0, clean];
+  return [4, 0, clean];
+}
+
+function compareRank(a, b) {
+  const left = pagePropertyOrderRank(a);
+  const right = pagePropertyOrderRank(b);
+  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+    if (left[i] < right[i]) return -1;
+    if (left[i] > right[i]) return 1;
+  }
+  return 0;
+}
+
+function objectPropertyNames(object) {
+  const names = new Set(['lss-object-type']);
+  for (const name of object.requiredProperties ?? []) names.add(canonicalPropertyKey(name));
+  for (const name of object.properties ?? []) names.add(canonicalPropertyKey(name));
+  if (entityAndFormNames.has(object.name)) names.add('related-to');
+  return [...names].filter(Boolean).sort(compareRank);
+}
+
+function queryPluginPropertyOrders() {
+  const output = runLogseq([
+    'query',
+    '--query',
+    '[:find ?title ?order :in $ ?ns :where [?p :db/ident ?ident] [(namespace ?ident) ?ns] [?p :block/title ?title] [?p :block/order ?order]]',
+    '--inputs',
+    '["plugin.property.logseq-lss-db-final-plugin"]',
+    '--output',
+    'json',
+    '--timeout-ms',
+    '60000',
+  ]);
+  const parsed = JSON.parse(output);
+  if (parsed.status !== 'ok') throw new Error(`property order query failed: ${output}`);
+  return new Map(parsed.data.result.map(([title, order]) => [canonicalPropertyKey(title), order]));
+}
+
+function verifyPropertyOrder() {
+  const orders = queryPluginPropertyOrders();
+  const results = objects.map((object) => {
+    const properties = objectPropertyNames(object);
+    const missing = properties.filter((property) => !orders.has(property));
+    const inversions = [];
+    for (let index = 1; index < properties.length; index += 1) {
+      const previous = properties[index - 1];
+      const current = properties[index];
+      const previousOrder = orders.get(previous);
+      const currentOrder = orders.get(current);
+      if (previousOrder && currentOrder && currentOrder < previousOrder) {
+        inversions.push({ previous, previousOrder, current, currentOrder });
+      }
+    }
+    const ownerIndex = properties.indexOf('owner');
+    const relatedToIndex = properties.indexOf('related-to');
+    const statusIndex = properties.indexOf('status');
+    const relatedToPlacementOk = ownerIndex < 0 || relatedToIndex === ownerIndex + 1;
+    const statusLastOk = statusIndex < 0 || statusIndex === properties.length - 1;
+    return {
+      objectType: object.name,
+      kind: entityTypes.includes(object) ? 'entity' : 'form',
+      properties,
+      missing,
+      inversions,
+      relatedToPlacementOk,
+      statusLastOk,
+    };
+  });
+  const failures = results.filter(
+    (result) =>
+      result.missing.length ||
+      result.inversions.length ||
+      !result.relatedToPlacementOk ||
+      !result.statusLastOk,
+  );
+  console.log(JSON.stringify({ graph, runId, checked: results.length, failures, results }, null, 2));
+  if (failures.length) process.exit(1);
 }
 
 function createPage(object, kind) {
@@ -302,6 +404,13 @@ function pageHasMaterialisedShape(object) {
   const headingPositions = allHeadings.map((heading) => show.indexOf(`:block/title "${heading}"`));
   const hasHeadings = headingPositions.every((pos) => pos >= 0);
   const headingsOrdered = headingPositions.every((pos, index) => index === 0 || pos > headingPositions[index - 1]);
+  const relatedToPlaceholderOutput = runLogseq([
+    'query',
+    '--query',
+    `[:find ?valueTitle :where [?p :block/title "${page}"] [?p :plugin.property.logseq-lss-db-final-plugin/related-to ?value] [?value :block/title ?valueTitle] [(contains? #{"LSS Placeholder - related-to" "LSS Placeholder/related-to" "Tags" "related-to"} ?valueTitle)]]`,
+    '--output',
+    'edn',
+  ]);
   const queryOutput = runLogseq([
     'query',
     '--query',
@@ -315,6 +424,8 @@ function pageHasMaterialisedShape(object) {
     hasHeadings,
     headingsOrdered,
     queryCount: countRows(queryOutput),
+    relatedToPlaceholderCount: countRows(relatedToPlaceholderOutput),
+    relatedToPlaceholderOutput,
     queryOutput,
   };
 }
@@ -372,14 +483,20 @@ if (mode === 'create') {
 } else if (mode === 'materialize-cli') {
   materializeAllPageShapes();
   const results = objects.map(pageHasMaterialisedShape);
-  const failures = results.filter((result) => !result.hasHeadings || !result.headingsOrdered || result.queryCount !== 5);
+  const failures = results.filter(
+    (result) => !result.hasHeadings || !result.headingsOrdered || result.queryCount !== 5 || result.relatedToPlaceholderCount !== 0,
+  );
   console.log(JSON.stringify({ graph, runId, prefix, checked: results.length, failures, results }, null, 2));
   if (failures.length) process.exit(1);
 } else if (mode === 'verify-materialised') {
   const results = objects.map(pageHasMaterialisedShape);
-  const failures = results.filter((result) => !result.hasHeadings || !result.headingsOrdered || result.queryCount !== 5);
+  const failures = results.filter(
+    (result) => !result.hasHeadings || !result.headingsOrdered || result.queryCount !== 5 || result.relatedToPlaceholderCount !== 0,
+  );
   console.log(JSON.stringify({ graph, runId, prefix, checked: results.length, failures, results }, null, 2));
   if (failures.length) process.exit(1);
+} else if (mode === 'verify-property-order') {
+  verifyPropertyOrder();
 } else {
   throw new Error(`unknown mode: ${mode}`);
 }

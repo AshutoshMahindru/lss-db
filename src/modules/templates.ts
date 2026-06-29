@@ -48,6 +48,10 @@ type TemplateProperty = { key: string; value: string };
 
 const APPLY_TEMPLATE_TO_TAGS = 'Apply template to tags';
 
+function objectGetsGenericRelatedTo(o: RegistryObject): boolean {
+  return [...(registry.entityTypes ?? []), ...(registry.formTypes ?? [])].some((candidate) => candidate.name === o.name);
+}
+
 function indentLevel(raw: string): number {
   const spaces = raw.match(/^(\s*)/)?.[1]?.length ?? 0;
   return Math.max(0, Math.floor(spaces / 2));
@@ -92,6 +96,7 @@ export function uniqueObjectProps(o: RegistryObject): string[] {
   for (const p of [...(o.properties ?? []), ...areaRelationshipPropertiesForObject(o)]) {
     add(p);
   }
+  if (objectGetsGenericRelatedTo(o)) add('related-to');
   return orderedPagePropertyNames(props, o).filter((property) => property !== 'lss-object-type');
 }
 
@@ -111,6 +116,7 @@ export function defaultPropertyValue(prop: string, o: RegistryObject): string {
   }
   const area = normalizeAreaRef(o.area);
   if (p === 'area' || p === 'areas') return `[[${pageForCanonical(area)}]]`;
+  if (p === 'related-to') return '';
   if (p === 'status') return safeTag(o.tag) === 'ActionItem' ? 'Todo' : 'active';
   if (p === 'Status') return 'Todo';
   if (p === 'priority' || p === 'Priority') return safeTag(o.tag) === 'ActionItem' ? 'Medium' : 'medium';

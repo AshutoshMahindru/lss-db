@@ -13,6 +13,7 @@ import {
 } from '../core/editor';
 import { scheduleAutoRepair } from './auto-repair';
 import { repairNamedPage } from './repair';
+import { uniqueObjectProps } from './templates';
 import {
   canonicalPropertyKey,
   pageHasClassTag,
@@ -33,17 +34,6 @@ import type { Result } from '../core/types';
 import type { RegistryObject } from '../registry/types';
 import { viewDefinitionsSafe } from './queries';
 
-function uniqueProps(o: RegistryObject): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const p of [...(o.requiredProperties ?? []), ...(o.properties ?? [])]) {
-    if (!p || seen.has(p)) continue;
-    seen.add(p);
-    out.push(p);
-  }
-  return out;
-}
-
 function defaultPropertyValueForCreate(
   prop: string,
   o: RegistryObject,
@@ -57,6 +47,7 @@ function defaultPropertyValueForCreate(
   }
   const area = normalizeAreaRef(o.area);
   if (p === 'area' || p === 'areas') return `[[${pageForCanonical(area)}]]`;
+  if (p === 'related-to') return '';
   if (p === 'status') return safeTag(o.tag) === 'ActionItem' ? 'Todo' : 'active';
   if (p === 'priority' || p === 'Priority') return safeTag(o.tag) === 'ActionItem' ? 'Medium' : 'medium';
   if (['date', 'captured-on', 'asked-on', 'decided-on', 'start-date', 'review-date', 'created-on'].includes(p)) {
@@ -200,7 +191,7 @@ async function currentPageContextForCreate(): Promise<{
 async function defaultCreateOverrides(o: RegistryObject): Promise<Record<string, string>> {
   const context = await currentPageContextForCreate();
   if (!context?.objectType || context.objectType === o.name) return {};
-  const objectProps = new Set(uniqueProps(o));
+  const objectProps = new Set(uniqueObjectProps(o));
   const overrides: Record<string, string> = {};
   const dashboardProps = dashboardContextProps(context.objectType);
   const directProps = currentTypeNameCandidates(context.objectType);
@@ -280,7 +271,7 @@ async function upsertCreationProperties(
     return;
   }
 
-  const props = uniqueProps(o);
+  const props = uniqueObjectProps(o);
   let written = 0;
   for (const p of props) {
     try {
@@ -316,7 +307,7 @@ async function createEntityByName(r: Result, objectName: string): Promise<void> 
     'lss-object-tag': `#${safeTag(o.tag)}`,
     'lss-post-created': 'true',
   };
-  for (const p of uniqueProps(o)) {
+  for (const p of uniqueObjectProps(o)) {
     try {
       const value = await createPropertyValue(p, o, overrides);
       if (value != null) pageProps[p] = value;
