@@ -11,6 +11,7 @@ const repairUserPropertiesSource = fs.readFileSync('src/modules/repair-user-prop
 const repairPageResolutionSource = fs.readFileSync('src/modules/repair-page-resolution.ts', 'utf8');
 const repairTemplateSource = fs.readFileSync('src/modules/repair-template.ts', 'utf8');
 const templatesSource = fs.readFileSync('src/modules/templates.ts', 'utf8');
+const propertyOrderSource = fs.readFileSync('src/modules/property-order.ts', 'utf8');
 const contractsSource = fs.readFileSync('src/modules/contracts.ts', 'utf8');
 const repairDashboardSource = fs.readFileSync('src/modules/repair-dashboard.ts', 'utf8');
 const queriesSource = fs.readFileSync('src/modules/queries.ts', 'utf8');
@@ -178,37 +179,52 @@ for (const object of allObjects) {
 }
 function canonicalObjectPropertyOrder(object) {
   const seen = new Set();
-  const required = [];
-  const related = [];
-  const optional = [];
-  let deferredRelatedTo = '';
-  const add = (property, bucket) => {
+  const props = [];
+  const add = (property) => {
     if (!property || seen.has(property)) return;
     seen.add(property);
-    if (property === 'related-to') {
-      deferredRelatedTo = property;
-    } else if (String(property).startsWith('related-')) {
-      related.push(property);
-    } else {
-      bucket.push(property);
-    }
+    props.push(property);
   };
-  for (const property of object.requiredProperties ?? []) add(property, required);
-  for (const property of object.properties ?? []) add(property, optional);
-  if (deferredRelatedTo) related.push(deferredRelatedTo);
-  return [...required, ...related, ...optional];
+  const targetRank = (property) => {
+    const spec = propertyByName.get(property);
+    if (String(spec?.type ?? '').toLowerCase() !== 'node') return null;
+    const targets = new Set((spec?.targets ?? []).map(String));
+    const objectArea = String(object.area ?? '').replace('Cross-Area', 'Area/Cross-Cutting');
+    for (let index = 0; index < entityTypes.length; index++) {
+      const target = entityTypes[index];
+      if (!targets.has(target.tag || target.name)) continue;
+      if (String(target.area ?? '').replace('Cross-Area', 'Area/Cross-Cutting') !== objectArea) continue;
+      return index;
+    }
+    return null;
+  };
+  const rank = (property) => {
+    if (property === 'area' || property === 'areas') return [1, property === 'area' ? 0 : 1];
+    const relationRank = targetRank(property);
+    if (relationRank != null) return [2, relationRank];
+    if (String(property).startsWith('related-') && property !== 'related-to') return [2, 10000];
+    if (property === 'related-to') return [3, 0];
+    if (property === 'status') return [5, 0];
+    return [4, 0];
+  };
+  for (const property of object.requiredProperties ?? []) add(property);
+  for (const property of object.properties ?? []) add(property);
+  return props
+    .map((property, index) => ({ property, index, rank: rank(property) }))
+    .sort((a, b) => a.rank[0] - b.rank[0] || a.rank[1] - b.rank[1] || a.index - b.index)
+    .map((item) => item.property);
 }
 for (const object of allObjects) {
   const props = canonicalObjectPropertyOrder(object);
   const relatedToIndex = props.indexOf('related-to');
-  if (relatedToIndex < 0) continue;
-  for (const property of props.slice(0, relatedToIndex)) {
-    if (!(object.requiredProperties ?? []).includes(property) && !String(property).startsWith('related-')) {
-      fail(`${object.name} places ${property} before related-to`);
+  const statusIndex = props.indexOf('status');
+  if (statusIndex >= 0 && statusIndex !== props.length - 1) fail(`${object.name} must place status last`);
+  const areaIndex = props.indexOf('area');
+  if (areaIndex >= 0 && areaIndex !== 0) fail(`${object.name} must place area before object-specific relations`);
+  if (relatedToIndex >= 0) {
+    for (const property of props.slice(relatedToIndex + 1)) {
+      if (String(property).startsWith('related-')) fail(`${object.name} places specific related field ${property} after related-to`);
     }
-  }
-  for (const property of props.slice(relatedToIndex + 1)) {
-    if (String(property).startsWith('related-')) fail(`${object.name} places specific related field ${property} after related-to`);
   }
 }
 const interaction = allObjects.find((object) => object.name === 'Interaction');
@@ -269,15 +285,16 @@ if (
   fail('registry must generate named same-area relationship fields for page materialisation and native setup');
 }
 if (
-  !templatesSource.includes('const required: string[] = []') ||
-  !templatesSource.includes('const related: string[] = []') ||
-  !templatesSource.includes('const optional: string[] = []') ||
-  !templatesSource.includes("if (p === 'related-to')") ||
-  !templatesSource.includes("p.startsWith('related-')") ||
-  !templatesSource.includes('if (deferredRelatedTo) related.push(deferredRelatedTo)') ||
-  !templatesSource.includes('return [...required, ...related, ...optional]')
+  !templatesSource.includes("out.push({ key: 'lss-object-type', value: obj.name })") ||
+  !templatesSource.includes('orderedPagePropertyNames(props, o)') ||
+  !propertyOrderSource.includes("if (clean === 'lss-object-type') return [0, 0]") ||
+  !propertyOrderSource.includes('if (AREA_PROPERTIES.has(clean)) return [1') ||
+  !propertyOrderSource.includes("clean.startsWith('related-') && clean !== 'related-to'") ||
+  !propertyOrderSource.includes("if (clean === 'related-to') return [3, 0]") ||
+  !propertyOrderSource.includes('if (STATUS_PROPERTIES.has(clean)) return [5, 0]') ||
+  !propertyOrderSource.includes('areaRelationRank(clean, object)')
 ) {
-  fail('generic related-to must be ordered after specific related fields and before trailing optional fields');
+  fail('page properties must order lss-object-type, area, hierarchy relations, related-to, other fields, then status');
 }
 if (
   !contractsSource.includes("import { uniqueObjectProps } from './templates'") ||
@@ -299,7 +316,8 @@ if (
   !setupSource.includes('ensureRelatedToPropertyOrder') ||
   !setupSource.includes('await ensureRelatedToPropertyOrder(r);') ||
   !setupSource.includes('ensurePrimaryDisplayPropertyOrder') ||
-  !setupSource.includes('PRIMARY_DISPLAY_PROPERTIES') ||
+  !setupSource.includes('displayPropertyOrderSpecs') ||
+  !setupSource.includes('displayPropertiesOutOfOrder') ||
   !setupSource.includes('propertiesBeforePrimaryDisplayFields') ||
   !setupSource.includes('ensureRelatedToBeforeTrailingAdminProperties') ||
   !setupSource.includes('displayPropertyBeforeRelatedTo') ||
@@ -309,9 +327,8 @@ if (
   !setupSource.includes('relatedToTrailingDisplayPropertySpecs') ||
   !setupSource.includes('afterPrimaryDisplayPropertySpecs') ||
   !setupSource.includes('for (const rel of allRelationships()) add(rel.property)') ||
-  !setupSource.includes("PRIMARY_DISPLAY_PROPERTIES.has(name)") ||
   !setupSource.includes('const relatedToIndex = props.indexOf') ||
-  !setupSource.includes("trailing.add('lss-object-type')") ||
+  setupSource.includes("trailing.add('lss-object-type')") ||
   !setupSource.includes('const isDate = String(spec.type ??') ||
   !setupSource.includes('resolvePageFromIdentity(raw)') ||
   !setupSource.includes("^\\d+(?:\\s*,\\s*\\d+)*$") ||
@@ -324,9 +341,9 @@ if (
   !setupSource.includes('Logseq would reject the type change') ||
   !setupSource.includes('(not [?entity :db/ident ?entityIdent])') ||
   !setupSource.includes('schema repair changed property order') ||
-  !setupSource.includes("clean.startsWith('related-')") ||
-  !setupSource.includes("displayPropertyBeforeRelatedTo(name, spec)") ||
-  !setupSource.includes('Repairing related display order so specific related field(s) render immediately before related-to') ||
+  !setupSource.includes('pagePropertyComesBeforeRelatedTo') ||
+  !setupSource.includes('orderedPagePropertyNames') ||
+  !setupSource.includes('lss-object-type, area, area relations, related-to, other fields, status') ||
   !setupSource.includes('Skipped stale native node schema repair') ||
   !setupSource.includes('repairRelatedToDisplayOrder') ||
   !repairSource.includes('ensureRelatedToPropertyOrder(result, obj)') ||
@@ -346,6 +363,9 @@ if (repairRelatedToStart < 0 || resetStaleStart < 0) {
 const repairRelatedToBody = setupSource.slice(repairRelatedToStart, resetStaleStart);
 if (repairRelatedToBody.includes('repairStaleNativeNodePropertySchemas(r)')) {
   fail('related display order repair must not run stale native schema repair');
+}
+if (repairRelatedToBody.includes('resetNativePropertyDefinition') || repairRelatedToBody.includes('resetRelatedToNativeProperty')) {
+  fail('related display order repair must not remove/recreate native property definitions');
 }
 if (
   setupStep10Source.includes('resetRelatedToNativeProperty') ||
