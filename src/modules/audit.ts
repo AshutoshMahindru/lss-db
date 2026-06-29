@@ -315,7 +315,7 @@ function formatAuditReport(pageName: string, findings: AuditFinding[]): string {
   const lines: string[] = [];
   lines.push(`Audit for ${pageName}`);
   lines.push(`checked-at:: ${new Date().toISOString()}`);
-  lines.push(`plugin-version:: 2.0.41`);
+  lines.push(`plugin-version:: 2.0.44`);
   lines.push('');
   if (!findings.length) {
     lines.push('## Summary');

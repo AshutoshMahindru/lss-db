@@ -110,6 +110,7 @@ function registerRegistryCreationCommands(): void {
 
 export function registerCommands(): void {
   registerAlias('LSS: Initialize Schema', 'lss: 1setup-all', setupAll);
+  registerAliases(['lss1', 'lss 1', 'lss:1setup-all'], setupAll);
   register('lss: 2setup-bootstrap', step1);
   register('lss: 3setup-areas', step2);
   register('lss: 4setup-schema-pages', step3);

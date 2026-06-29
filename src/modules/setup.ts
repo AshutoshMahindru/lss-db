@@ -126,7 +126,11 @@ export async function step6(r: Result): Promise<void> {
   }
 }
 
-export async function step7(r: Result): Promise<void> {
+type SetupTemplateOptions = {
+  nativeTemplateQueries?: boolean;
+};
+
+export async function step7(r: Result, options: SetupTemplateOptions = {}): Promise<void> {
   for (const t of registry.templates ?? []) {
     await ensurePage(r, t.name);
     await appendManagedBlock(
@@ -137,7 +141,11 @@ export async function step7(r: Result): Promise<void> {
     );
   }
   if (MODE === 'db') {
-    await installNativeTemplates(r);
+    const nativeTemplateQueries = options.nativeTemplateQueries !== false;
+    await installNativeTemplates(r, {
+      includeQueryBlocks: nativeTemplateQueries,
+      finalizeQueryBlocks: nativeTemplateQueries,
+    });
   } else {
     await installLegacyTemplates(r);
   }
@@ -1100,14 +1108,14 @@ export async function stepVerify(r: Result): Promise<void> {
 }
 
 export async function setupAll(r: Result): Promise<void> {
-  r.notes.push('Runs the full setup sequence. If Logseq slows down, use commands 2-13 step by step instead.');
+  r.notes.push('Runs the full setup sequence. Native template query UI finalization is skipped here; use lss: 8setup-templates separately if needed.');
   await step1(r);
   await step2(r);
   await step3(r);
   await step4(r);
   await step5(r);
   await step6(r);
-  await step7(r);
+  await step7(r, { nativeTemplateQueries: false });
   await step8(r);
   await step9(r);
   if (MODE === 'db') await step10db(r);
@@ -1116,14 +1124,14 @@ export async function setupAll(r: Result): Promise<void> {
 }
 
 export async function maintInitializeSchema(r: Result): Promise<void> {
-  r.notes.push('One-shot initialize runs all scaffold layers. Step-by-step commands remain safer for large graphs.');
+  r.notes.push('One-shot initialize runs all scaffold layers. Native template query UI finalization is skipped here; use lss: 8setup-templates separately if needed.');
   await step1(r);
   await step2(r);
   await step3(r);
   await step4(r);
   await step5(r);
   await step6(r);
-  await step7(r);
+  await step7(r, { nativeTemplateQueries: false });
   await step8(r);
   await step9(r);
   if (MODE === 'db') await step10db(r);

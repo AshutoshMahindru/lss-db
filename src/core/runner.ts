@@ -88,7 +88,13 @@ async function runWithTimeout(
   result: Result,
   context?: CommandContext,
 ): Promise<void> {
-  const timeoutMs = result.command === 'lss: materialise page' ? 90000 : 180000;
+  const command = String(result.command ?? '');
+  const timeoutMs =
+    command === 'lss: materialise page'
+      ? 90000
+      : /(?:^lss:\s*1setup-all$|initialize schema|setup-all)/i.test(command)
+        ? 600000
+        : 180000;
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   try {
     await Promise.race([

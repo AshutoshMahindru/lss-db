@@ -511,7 +511,13 @@ export async function appendManagedBlock(
     return;
   }
   const content = `${body}\n\n<!-- ${marker} -->`;
-  await appendBlockInPageVerified(result, page, content, `${page}:${markerId}`, marker);
+  try {
+    await logseq.Editor.appendBlockInPage(page, content);
+    result.actions.push(`APPEND block: ${page}:${markerId}`);
+    await sleep(THROTTLE_MS);
+  } catch (error) {
+    result.errors.push(`append-block ${page}:${markerId}: ${formatError(error)}`);
+  }
 }
 
 export async function insertAtCursor(result: Result, content: string, label: string): Promise<void> {

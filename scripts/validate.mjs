@@ -352,6 +352,15 @@ if (
 ) {
   fail('setup/materialise must not reorder existing graph properties by resetting native property definitions');
 }
+if (
+  !setupSource.includes("step7(r, { nativeTemplateQueries: false })") ||
+  !templatesSource.includes('includeQueryBlocks?: boolean') ||
+  !templatesSource.includes('finalizeQueryBlocks?: boolean') ||
+  !templatesSource.includes('Skipped native template query block setup') ||
+  !templatesSource.includes('Skipped native template query UI finalization')
+) {
+  fail('setup-all must skip native template query block/finalization work; lss: 8setup-templates remains the focused repair path');
+}
 for (const view of registry.viewDefinitions ?? []) {
   for (const tag of view.sourceTags ?? []) {
     if (!objectNames.has(tag) && !objectTags.has(tag)) fail(`view ${view.id} has unknown source tag ${tag}`);
@@ -445,12 +454,18 @@ if (
   !runnerSource.includes('lss: materialise page invoked v${VERSION}') ||
   !runnerSource.includes('runWithTimeout') ||
   !runnerSource.includes('Command timed out after') ||
+  !runnerSource.includes('initialize schema') ||
+  !runnerSource.includes('setup-all') ||
+  !runnerSource.includes('600000') ||
+  !registerSource.includes("'lss1'") ||
+  !registerSource.includes("'lss 1'") ||
   runnerSource.includes('writeStartedReport') ||
   runnerSource.includes('bestEffortStartedReport') ||
   runnerSource.includes('lss-report-started') ||
   repairSource.includes('bestEffortStartedReport') ||
   !editorSource.includes('ensureExactPage') ||
   !editorSource.includes('appendBlockInPageVerified') ||
+  editorSource.includes('await appendBlockInPageVerified(result, page, content, `${page}:${markerId}`, marker)') ||
   !editorSource.includes('resolvePageByDatascriptName') ||
   !editorSource.includes('currentPageFromCurrentBlocks') ||
   !editorSource.includes('getCurrentPageBlocksTree') ||

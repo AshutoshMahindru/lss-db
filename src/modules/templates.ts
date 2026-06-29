@@ -316,10 +316,10 @@ function rootContentWithMarker(displayName: string, markerId: string): string {
   return `${displayName}\n\n<!-- lss-managed:${markerId} -->`;
 }
 
-async function buildEnrichedTemplateBatch(t: RegistryTemplate): Promise<BatchBlock | null> {
+async function buildEnrichedTemplateBatch(t: RegistryTemplate, includeQueryBlocks = true): Promise<BatchBlock | null> {
   const batch = outlineToBatchBlock(groupedTemplateOutlineLines(t));
   if (!batch) return null;
-  return await injectQueriesIntoBatch(batch, t);
+  return includeQueryBlocks ? await injectQueriesIntoBatch(batch, t) : batch;
 }
 
 async function isDbGraph(): Promise<boolean> {
@@ -622,8 +622,20 @@ async function dedupeTemplateQueryBlocks(
   return current;
 }
 
-async function syncTemplateStructure(result: Result, rootBlockId: string, t: RegistryTemplate): Promise<void> {
+type NativeTemplateInstallOptions = {
+  includeQueryBlocks?: boolean;
+  finalizeQueryBlocks?: boolean;
+};
+
+async function syncTemplateStructure(
+  result: Result,
+  rootBlockId: string,
+  t: RegistryTemplate,
+  options: NativeTemplateInstallOptions = {},
+): Promise<void> {
   const displayName = templateNameFromRegistry(t);
+  const includeQueryBlocks = options.includeQueryBlocks !== false;
+  const finalizeQueryBlocks = options.finalizeQueryBlocks !== false;
   if (!logseq.Editor.getBlock) return;
 
   let block: any;
@@ -644,6 +656,10 @@ async function syncTemplateStructure(result: Result, rootBlockId: string, t: Reg
 
   await removeObsoleteTemplateHeadings(result, rootBlockId, displayName);
   await ensureTemplateSectionHeadings(result, rootBlockId, displayName);
+  if (!includeQueryBlocks) {
+    result.notes.push(`Skipped native template query block setup for ${displayName}; lss: 8setup-templates can repair query blocks separately.`);
+    return;
+  }
 
   const refreshed = await logseq.Editor.getBlock(rootBlockId, { includeChildren: true });
   const views = viewDefinitionsSafe(t);
@@ -675,7 +691,7 @@ async function syncTemplateStructure(result: Result, rootBlockId: string, t: Reg
       const currentContent = String(sectionBlock?.content ?? '').trim();
       if (currentContent === qTitle) {
         // already the titled block from batch, just configure it
-        await configureDbAdvancedQueryBlock(result, sectionBlock, queryContent);
+        if (finalizeQueryBlocks) await configureDbAdvancedQueryBlock(result, sectionBlock, queryContent);
         await updateBlockContent(result, sectionBlock, qTitle, `Set title for query`);
       } else {
         // Convert legacy section-wrapper templates into a titled query block at the same indent.
@@ -688,7 +704,7 @@ async function syncTemplateStructure(result: Result, rootBlockId: string, t: Reg
           }
         }
         await updateBlockContent(result, sectionBlock, qTitle, `Set title for query`);
-        await configureDbAdvancedQueryBlock(result, sectionBlock, queryContent);
+        if (finalizeQueryBlocks) await configureDbAdvancedQueryBlock(result, sectionBlock, queryContent);
         await updateBlockContent(result, sectionBlock, qTitle, `Set title for query`);
       }
     } else {
@@ -707,6 +723,10 @@ async function syncTemplateStructure(result: Result, rootBlockId: string, t: Reg
     await ensureTemplateQueryBlock(result, rootBlockId, displayName, view);
   }
   await dedupeTemplateQueryBlocks(result, rootBlockId, displayName, views);
+  if (!finalizeQueryBlocks) {
+    result.notes.push(`Skipped native template query UI finalization for ${displayName}; lss: materialise page repairs page-level queries.`);
+    return;
+  }
 
   // Final pass: ensure all advanced queries in the template have full structure (tags, display-type :code, proper EDN with corrections).
   const isDbFinal = await isDbGraph();
@@ -730,6 +750,7 @@ async function registerNativeTemplate(
   rootBlock: any,
   rootBlockId: string,
   t: RegistryTemplate,
+  options: NativeTemplateInstallOptions = {},
 ): Promise<void> {
   const displayName = templateNameFromRegistry(t);
   const markerId = templateMarkerId(t);
@@ -753,7 +774,7 @@ async function registerNativeTemplate(
     }
   }
 
-  await syncTemplateStructure(result, rootBlockId, t);
+  await syncTemplateStructure(result, rootBlockId, t, options);
 
   const appliesTo = safeTag((t.appliesTo ?? [])[0] ?? '');
   if (appliesTo) {
@@ -782,6 +803,7 @@ async function installOneNativeTemplate(
   pageName: string,
   indexBlockId: string,
   t: RegistryTemplate,
+  options: NativeTemplateInstallOptions = {},
 ): Promise<void> {
   const displayName = templateNameFromRegistry(t);
   const markerId = templateMarkerId(t);
@@ -791,7 +813,7 @@ async function installOneNativeTemplate(
   let rootBlockId = blockId(existing);
 
   if (!rootBlockId) {
-    const batch = await buildEnrichedTemplateBatch(t);
+    const batch = await buildEnrichedTemplateBatch(t, options.includeQueryBlocks !== false);
     if (!batch) {
       result.errors.push(`template outline empty: ${displayName}`);
       return;
@@ -826,10 +848,10 @@ async function installOneNativeTemplate(
   }
 
   if (!rootBlockId || !rootBlock) return;
-  await registerNativeTemplate(result, rootBlock, rootBlockId, t);
+  await registerNativeTemplate(result, rootBlock, rootBlockId, t, options);
 }
 
-export async function installNativeTemplates(result: Result): Promise<void> {
+export async function installNativeTemplates(result: Result, options: NativeTemplateInstallOptions = {}): Promise<void> {
   const canonical = 'LSS Native Templates';
   const pageName = await ensurePage(result, canonical);
   await appendManagedBlock(result, canonical, 'db-native-template-index-v4', [
@@ -854,7 +876,7 @@ export async function installNativeTemplates(result: Result): Promise<void> {
 
   let registered = 0;
   for (const t of registry.templates ?? []) {
-    await installOneNativeTemplate(result, pageName, indexBlockId, t);
+    await installOneNativeTemplate(result, pageName, indexBlockId, t, options);
     registered++;
   }
   result.notes.push(
