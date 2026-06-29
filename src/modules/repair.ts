@@ -48,7 +48,7 @@ import { isProtectedMaterialisePage, readRepairPageBlocks, resolveRepairPage } f
 import { ensureRelatedToBeforeTrailingAdminProperties, ensureRelatedToPropertyOrder, removeNativeTagSchemaProperties } from './setup';
 import { upsertBlockPropertyViaHost } from './advanced-query-blocks';
 
-type RepairSpecificPageOptions = { repairLinkedParents?: boolean; maxDashboardQueryViews?: number; dashboardQueryPageSectionHeadings?: string[]; aggregateDashboardQueryPageSectionHeadings?: string[] };
+type RepairSpecificPageOptions = { repairLinkedParents?: boolean; maxDashboardQueryViews?: number; dashboardQueryPageSectionHeadings?: string[]; aggregateDashboardQueryPageSectionHeadings?: string[]; allowUntypedBootstrap?: boolean };
 function repairPropertyLines(content: string): Array<{ property: string; value: string }> {
   const lines: Array<{ property: string; value: string }> = [];
   for (const line of String(content ?? '').split(/\r?\n/)) {
@@ -979,13 +979,14 @@ async function inferObjectTypeForRepairPage(
   tags: Set<string>,
   props: Map<string, string>,
   result: Result,
+  allowUntypedBootstrap: boolean,
 ): Promise<string | null> {
   const fromTags = await ensureObjectTypeFromTags(pageBlockId, tags, props, result);
   if (fromTags) return fromTags;
 
   const fromSections = inferCurrentPageObjectType(pageName, blocks);
   const fromIncoming = fromSections ? null : (await inferVentureFromIncomingFunctions(pageName, pageBlockId, result)) ? 'Venture' : null;
-  const fromExplicitMaterialise = fromSections || fromIncoming ? null : defaultUntypedMaterialiseObjectType(pageName, props);
+  const fromExplicitMaterialise = fromSections || fromIncoming || !allowUntypedBootstrap ? null : defaultUntypedMaterialiseObjectType(pageName, props);
   const inferred = fromSections ?? fromIncoming ?? fromExplicitMaterialise;
   if (!inferred) return null;
   const obj = objectByName(inferred);
@@ -1024,7 +1025,7 @@ async function repairPageCore(
     props.set('lss-object-type', hintedType);
     result.notes.push(`Using lss-object-type:: ${hintedType} from repair type hint.`);
   }
-  const inferredType = hintedType ?? (await inferObjectTypeForRepairPage(pageName, pageBlockId, blocks, tags, props, result));
+  const inferredType = hintedType ?? (await inferObjectTypeForRepairPage(pageName, pageBlockId, blocks, tags, props, result, options.allowUntypedBootstrap === true));
   // === TAG IS SOLE SCHEMA SOURCE (post "bigger pass" cleanup) ===
   if (inferredType) {
     const obj = objectByName(inferredType);
@@ -1475,11 +1476,9 @@ async function repairSpecificPage(
 }
 
 export async function repairNamedPage(
-  result: Result,
-  pageRef: string,
-  typeHint: string | null = null,
+  result: Result, pageRef: string, typeHint: string | null = null, options: RepairSpecificPageOptions = {},
 ): Promise<number> {
-  return repairSpecificPage(result, pageRef, typeHint, 'named');
+  return repairSpecificPage(result, pageRef, typeHint, 'named', options);
 }
 
 export async function repairCurrentPage(result: Result, context?: CommandContext): Promise<void> {
@@ -1496,5 +1495,5 @@ export async function repairCurrentPage(result: Result, context?: CommandContext
     return;
   }
   result.notes.push(`Materialise raw current-page resolver returned: ${current}.`);
-  await repairSpecificPage(result, current, null, 'current page', { repairLinkedParents: false, maxDashboardQueryViews: 2, dashboardQueryPageSectionHeadings: ['FORMS', 'REVIEWS'], aggregateDashboardQueryPageSectionHeadings: ['FORMS', 'REVIEWS'] });
+  await repairSpecificPage(result, current, null, 'current page', { repairLinkedParents: false, maxDashboardQueryViews: 2, dashboardQueryPageSectionHeadings: ['FORMS', 'REVIEWS'], aggregateDashboardQueryPageSectionHeadings: ['FORMS', 'REVIEWS'], allowUntypedBootstrap: true });
 }

@@ -428,6 +428,20 @@ if (
   fail('manual materialise must suppress pending auto-repair before editing entity/query blocks');
 }
 if (
+  !autoRepairSource.includes('rootPages') ||
+  !autoRepairSource.includes('layerPages') ||
+  !autoRepairSource.includes('SKIP_PAGE_NAMES') ||
+  autoRepairSource.includes("text.includes('lss-managed:')") ||
+  autoRepairSource.includes('text.includes("lss-managed:")') ||
+  !autoRepairSource.includes('allowUntypedBootstrap: false') ||
+  !autoRepairSource.includes('maxDashboardQueryViews: 0') ||
+  !repairSource.includes('allowUntypedBootstrap?: boolean') ||
+  !repairSource.includes('allowUntypedBootstrap === true') ||
+  !repairSource.includes('allowUntypedBootstrap: true')
+) {
+  fail('auto-repair must skip LSS root/layer pages and must not bootstrap ordinary untyped pages as Venture');
+}
+if (
   !registerSource.includes("register('lss: materialise page', repairCurrentPage)") ||
   !registerSource.includes("registerPalette('lss: materialise page', 'lss-materialise-page', repairCurrentPage)") ||
   !registerSource.includes("registerPageMenu('lss: materialise page', repairCurrentPage)")
@@ -746,6 +760,8 @@ if (
   !repairSource.includes("'Venture'") ||
   !repairSource.includes('explicit materialise on an ordinary untyped page') ||
   !repairSource.includes('isProtectedMaterialisePage') ||
+  !repairPageResolutionSource.includes('rootPages') ||
+  !repairPageResolutionSource.includes('layerPages') ||
   !repairPageResolutionSource.includes('NATIVE SECTIONS') ||
   !repairPageResolutionSource.includes('RELATED ENTITIES') ||
   !repairPageResolutionSource.includes('decoded.match(/\\/page\\/([^/?#&]+)/i)')

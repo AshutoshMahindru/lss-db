@@ -2,7 +2,7 @@ import { canonicalPropertyKey, entityIdentity, pageHasClassTag } from '../core/d
 import { blockId, currentPageName, getBlocks, getPage, walkBlocks } from '../core/editor';
 import { formatError, newResult, writeReport } from '../core/runner';
 import { safePageName, safeTag } from '../core/names';
-import { allObjects } from '../registry';
+import { allObjects, layerPages, rootPages } from '../registry';
 import { isQueryLikeContent, relationshipPropertyNames } from './queries';
 import { repairNamedPage } from './repair';
 import { primaryObjectTypesFromTags, readIncomingSourceTagsForPage } from './repair-source-tags';
@@ -12,6 +12,7 @@ const COOLDOWN_MS = 5000;
 const AUTO_REPAIR_SETTING_KEY = 'autoRepairEnabled';
 const SKIP_PAGE_RE =
   /^(LSS |LSS$|Template(?:\/| - )|Dashboard(?:\/| - )|Entity-Page(?:\/| - )|Tag Properties(?:\/| - )|Property Reference(?:\/| - )|DB Tag(?:\/| - )|Tag Reference(?:\/| - )|Relationship(?:\/| - )|Area(?:\/| - ))/i;
+const SKIP_PAGE_NAMES = new Set([...rootPages(), ...layerPages()].map((name) => safePageName(name).toLowerCase()));
 
 const RELATIONSHIP_PROPERTIES = new Set(relationshipPropertyNames());
 const LSS_OBJECT_TAGS = new Set(allObjects().map((o) => safeTag(o.tag)).filter(Boolean));
@@ -64,7 +65,7 @@ export function markRepairCooldown(pageName: string, ms = COOLDOWN_MS * 3): void
 function shouldSkipPage(pageName: string): boolean {
   const name = String(pageName ?? '').trim();
   if (!name) return true;
-  return SKIP_PAGE_RE.test(name);
+  return SKIP_PAGE_RE.test(name) || SKIP_PAGE_NAMES.has(safePageName(name).toLowerCase());
 }
 
 function isUserPageEntity(page: Record<string, unknown> | null): boolean {
@@ -94,7 +95,6 @@ function blockContentRelevant(content: string): boolean {
   if (text.includes('<% current page %>')) return true;
   if (isQueryLikeContent(text)) return true;
   if (/\blss-object-type::/i.test(text)) return true;
-  if (text.includes('lss-managed:')) return true;
   for (const prop of RELATIONSHIP_PROPERTIES) {
     if (new RegExp(`\\b${prop}::`, 'i').test(text)) return true;
   }
@@ -201,6 +201,7 @@ async function readPageRecord(pageName: string): Promise<Record<string, unknown>
 }
 
 async function pageQualifiesForAutoRepair(pageName: string): Promise<boolean> {
+  if (shouldSkipPage(pageName)) return false;
   const page = await readPageRecord(pageName);
   if (!isUserPageEntity(page)) return false;
 
@@ -253,7 +254,7 @@ async function runAutoRepair(pageName: string): Promise<void> {
   cooldownUntil.set(pageName, Date.now() + COOLDOWN_MS);
   const result = newResult('lss:auto-repair');
   try {
-    await repairNamedPage(result, pageName);
+    await repairNamedPage(result, pageName, null, { allowUntypedBootstrap: false, repairLinkedParents: false, maxDashboardQueryViews: 0 });
   } catch (error) {
     result.errors.push(formatError(error));
   } finally {

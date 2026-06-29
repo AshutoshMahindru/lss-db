@@ -1,9 +1,13 @@
 import { getBlocks, getPage, resolvePageFromIdentity } from '../core/editor';
 import { safePageName, safeTag, visiblePageLabel } from '../core/names';
+import { layerPages, rootPages } from '../registry';
+
+const PROTECTED_MATERIALISE_PAGE_NAMES = new Set([...rootPages(), ...layerPages()].map((name) => safePageName(name).toLowerCase()));
 
 export function isProtectedMaterialisePage(pageName: string, props: Map<string, string> = new Map()): boolean {
   const label = safePageName(visiblePageLabel(pageName));
   if (!label) return true;
+  if (PROTECTED_MATERIALISE_PAGE_NAMES.has(label.toLowerCase())) return true;
   if (props.has('lss-kind') || props.has(':plugin.property.logseq-lss-db-final-plugin/lss-kind')) return true;
   if (/^(NATIVE SECTIONS|RELATED ENTITIES|GENERIC ENTITIES|FORMS|REVIEWS|DATES)$/i.test(label)) return true;
   if (/^(LSS(?:\b| - )|Entity-Page|DB Tag|Tag Properties|Template|Dashboard|Word Extender|LSS Reports|Area|Relationship|Property Reference|Tag Reference)(?:\b| - |:)/i.test(label)) return true;
