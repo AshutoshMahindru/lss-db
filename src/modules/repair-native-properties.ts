@@ -18,7 +18,7 @@ async function ensureCachedNativeProperty(result: Result, key: string): Promise<
   const resetReason = await nativePropertyResetReasonForSpec(spec);
   if (resetReason) {
     result.notes.push(
-      `Native property ${shortKey}: stale schema detected (${resetReason}); auto/materialise left schema unchanged. Run LSS: Reset Stale Node Properties or LSS: Repair Related-To Display Order when ready for an explicit maintenance pass.`,
+      `Native property ${shortKey}: stale schema detected (${resetReason}); auto/materialise left schema unchanged. Re-run setup after clearing stale values when ready for an explicit maintenance pass.`,
     );
     nativeEnsureCache.add(shortKey);
     return;

@@ -367,13 +367,9 @@ if (
   !setupSource.includes('Skipped stale native node schema repair') ||
   !setupSource.includes('repairRelatedToDisplayOrder') ||
   !repairSource.includes('ensureRelatedToPropertyOrder(result, obj)') ||
-  !repairSource.includes('ensureRelatedToBeforeTrailingAdminProperties(result, obj)') ||
-  !registerSource.includes('lss: 55reset-related-to-property-order') ||
-  !navigationSource.includes('lss: 55reset-related-to-property-order') ||
-  !registerSource.includes('lss: 57repair-related-to-display-order') ||
-  !navigationSource.includes('lss: 57repair-related-to-display-order')
+  !repairSource.includes('ensureRelatedToBeforeTrailingAdminProperties(result, obj)')
 ) {
-  fail('existing graphs need a plugin-side related-to property order reset command');
+  fail('existing graphs need plugin-side related-to property order repair helpers');
 }
 const repairRelatedToStart = setupSource.indexOf('export async function repairRelatedToDisplayOrder');
 const resetStaleStart = setupSource.indexOf('export async function resetStaleNativeNodeProperties');
@@ -441,11 +437,9 @@ if (
 if (
   !setupSource.includes('resetStaleNativeNodeProperties') ||
   !setupSource.includes('Resetting stale native node property schema(s)') ||
-  !setupSource.includes('Repairing stale native node property schema(s) in place') ||
-  !registerSource.includes('lss: 56reset-stale-node-properties') ||
-  !navigationSource.includes('lss: 56reset-stale-node-properties')
+  !setupSource.includes('Repairing stale native node property schema(s) in place')
 ) {
-  fail('stale native node properties need an explicit reset command');
+  fail('stale native node properties need an explicit repair helper');
 }
 if (
   !dbPropertiesSource.includes('resolveJournalDatePropertyValue') ||
@@ -515,8 +509,6 @@ if (
   !runnerSource.includes('initialize schema') ||
   !runnerSource.includes('setup-all') ||
   !runnerSource.includes('600000') ||
-  !registerSource.includes("'lss1'") ||
-  !registerSource.includes("'lss 1'") ||
   runnerSource.includes('writeStartedReport') ||
   runnerSource.includes('bestEffortStartedReport') ||
   runnerSource.includes('lss-report-started') ||
@@ -632,10 +624,9 @@ if (
   repairNativePropertiesSource.includes('resetNativePropertyDefinition') ||
   repairNativePropertiesSource.includes('repairNativeNodePropertySchemaInPlace') ||
   !repairNativePropertiesSource.includes('auto/materialise left schema unchanged') ||
-  !repairNativePropertiesSource.includes('Reset Stale Node Properties') ||
-  !repairNativePropertiesSource.includes('Repair Related-To Display Order')
+  !repairNativePropertiesSource.includes('Re-run setup after clearing stale values')
 ) {
-  fail('materialise must cache native property setup checks and leave stale-schema repair to explicit maintenance commands');
+  fail('materialise must cache native property setup checks and leave stale-schema repair to explicit maintenance helpers');
 }
 if (
   !repairDashboardSource.includes('isPlaceholderPageRef') ||
@@ -717,16 +708,92 @@ if (/\.addTagProperty\s*\(/.test(setupSource)) {
   fail('setup must not add LSS entity schema properties to native tags');
 }
 const commandLabels = [...navigationSource.matchAll(/label:\s*'([^']+)'/g)].map((match) => match[1]);
-if (commandLabels.length < 52) fail(`expected at least 52 command help labels, found ${commandLabels.length}`);
+if (commandLabels.length < 30) fail(`expected at least 30 core command help labels, found ${commandLabels.length}`);
 for (const label of commandLabels) {
   if (!registerSource.includes(label)) fail(`command help label is not registered: ${label}`);
+}
+for (const redundant of [
+  'lss1',
+  'lss 1',
+  'lss:1setup-all',
+  'LSS: Initialize Schema',
+  'LSS: Initialize Schema (step-by-step)',
+  'LSS: Verify Schema',
+  'LSS: Verify Schema (report only)',
+  'LSS: Audit Current Page',
+  'LSS: Audit Graph',
+  'LSS: Insert Venture Dashboard',
+  'LSS: Insert Project Dashboard',
+  'LSS: Insert Area Dashboard',
+  'LSS: Normalize Properties',
+  'LSS: Convert Text Relationships to Node References',
+  'LSS: Migrate Namespaced Objects to Tags',
+  'LSS: Snapshot Dashboard',
+  'LSS: Export Current Page Report',
+  'LSS: Generate Weekly Review',
+  'LSS: Expand Abbreviation',
+  'lss: 14new-venture',
+  'lss: 15new-project',
+  'lss: 16new-workstream',
+  'lss: 17new-person',
+  'lss: 18new-organisation',
+  'lss: 19new-document',
+  'lss: 20new-condition',
+  'lss: 21new-subject',
+  'lss: 22new-pursuit',
+  'lss: 23insert-action-item',
+  'lss: 24insert-decision',
+  'lss: 25insert-interaction',
+  'lss: 26insert-question',
+  'lss: 27insert-insight',
+  'lss: 28insert-idea',
+  'lss: 29insert-note',
+  'lss: 30insert-review',
+  'lss: 31insert-word-extender',
+  'lss: 32insert-dashboard-section',
+  'lss: 52new-function',
+  'lss53',
+  'lss 53',
+  'lss:53reset-venture-property',
+  'lss54',
+  'lss 54',
+  'lss:54clean-native-tag-schema-properties',
+  'lss55',
+  'lss 55',
+  'lss:55reset-related-to-property-order',
+  'lss56',
+  'lss 56',
+  'lss:56reset-stale-node-properties',
+  'lss57',
+  'lss 57',
+  'lss:57repair-related-to-display-order',
+  'LSS: Reset Venture Property',
+  'LSS: Clean Native Tag Schema Properties',
+  'LSS: Reset Related-To Property Order',
+  'LSS: Reset Stale Node Properties',
+  'LSS: Repair Related-To Display Order',
+]) {
+  if (registerSource.includes(redundant) || navigationSource.includes(redundant)) {
+    fail(`redundant command must not be registered or advertised: ${redundant}`);
+  }
+}
+for (const required of [
+  'lss: 53reset-venture-property',
+  'lss: 54clean-native-tag-schema-properties',
+  'lss: 55reset-related-to-property-order',
+  'lss: 56reset-stale-node-properties',
+  'lss: 57repair-related-to-display-order',
+]) {
+  if (!registerSource.includes(required) || !navigationSource.includes(required)) {
+    fail(`canonical maintenance command must be registered and advertised: ${required}`);
+  }
 }
 for (const required of [
   'registry.entityTypes',
   'registry.formTypes',
   'registry.wordExtenderTypes',
-  'lss: new-${commandSlug(label)}',
-  'lss: insert-${commandSlug(label)}',
+  'lss: new-${commandSlug(o.name)}',
+  'lss: insert-${commandSlug(o.name)}',
 ]) {
   if (!registryCreateSource.includes(required)) fail(`registry creation command coverage missing: ${required}`);
 }
@@ -909,17 +976,7 @@ for (const required of [
   'CLEAN native tag schema properties',
   'VERIFY native tag schema cleanup',
 ]) {
-  if (!nativeTagCleanupSource.includes(required)) fail(`native tag cleanup command missing responsibility: ${required}`);
-}
-for (const required of [
-  'cleanNativeTagSchemaProperties',
-  'lss: 54clean-native-tag-schema-properties',
-  'LSS: Clean Native Tag Schema Properties',
-]) {
-  if (!registerSource.includes(required)) fail(`native tag cleanup command registration missing: ${required}`);
-}
-if (!navigationSource.includes('lss: 54clean-native-tag-schema-properties')) {
-  fail('native tag cleanup command missing from command help');
+  if (!nativeTagCleanupSource.includes(required)) fail(`native tag cleanup helper missing responsibility: ${required}`);
 }
 for (const forbidden of [
   'ensureHostScope',
@@ -1115,7 +1172,7 @@ for (const [label, source, required] of [
       'findAllQueryBlocksInSectionAsync',
       'readNativeTagSchemaFindings',
       'Native tag schema pollution:',
-      'lss: 54clean-native-tag-schema-properties',
+      'lss: 11setup-db-native-config',
     ],
   ],
   [

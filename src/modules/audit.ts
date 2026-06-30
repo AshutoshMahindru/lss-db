@@ -388,7 +388,7 @@ export async function auditGraph(r: Result): Promise<void> {
       r.notes.push(
         `Native tag schema pollution: ${nativeTagSchema.findings.length} tag(s), ${totalProps} schema property binding(s). ${sample}${nativeTagSchema.findings.length > 10 ? '; ...' : ''}`,
       );
-      r.actions.push('Run lss: 54clean-native-tag-schema-properties, then lss: 51diagnose-current-page on affected journals.');
+      r.actions.push('Run lss: 11setup-db-native-config, then lss: 51diagnose-current-page on affected journals.');
     }
   }
   const applicableRules = (registry.auditRules ?? []).filter((rule) =>

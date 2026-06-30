@@ -1221,7 +1221,7 @@ export async function repairRelatedToDisplayOrder(r: Result): Promise<void> {
   const currentPageContext = await currentPageDisplayPropertyNames(r);
   const currentPageProperties = currentPageContext?.names;
   const currentPageObject = currentPageContext?.object;
-  r.notes.push('Skipped stale native node schema repair; run LSS: Reset Stale Node Properties separately if schema repair is required.');
+  r.notes.push('Skipped stale native node schema repair; run setup after clearing stale values if schema repair is required.');
   const initialRelatedToOrder = await nativePropertyOrder('related-to');
   if (!initialRelatedToOrder) {
     r.notes.push('related-to property order unavailable; display order repair left native property definitions unchanged.');

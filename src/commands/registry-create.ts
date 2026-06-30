@@ -23,40 +23,14 @@ function displayName(o: RegistryObject): string {
   return String(o.displayName ?? o.name);
 }
 
-function labelCandidates(o: RegistryObject): string[] {
-  return [
-    o.name,
-    displayName(o),
-    ...(o.aliases ?? []),
-  ]
-    .map((label) => String(label ?? '').trim())
-    .filter(Boolean);
-}
-
-function unique(values: string[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const value of values) {
-    if (!value || seen.has(value)) continue;
-    seen.add(value);
-    out.push(value);
-  }
-  return out;
-}
-
 function pageCommand(o: RegistryObject, kind: RegistryCreationKind): RegistryCreationCommand {
-  const labels = unique(
-    labelCandidates(o).flatMap((label) => [
-      `lss: new-${commandSlug(label)}`,
-      `LSS: New ${label}`,
-    ]),
-  );
+  const label = `lss: new-${commandSlug(o.name)}`;
   const noun = displayName(o);
   return {
     kind,
     objectName: o.name,
-    label: labels[0],
-    labels,
+    label,
+    labels: [label],
     description:
       kind === 'word-extender'
         ? `Create a placeholder ${noun} word-extender page from the registry.`
@@ -65,17 +39,12 @@ function pageCommand(o: RegistryObject, kind: RegistryCreationKind): RegistryCre
 }
 
 function formCommand(o: RegistryObject): RegistryCreationCommand {
-  const labels = unique(
-    labelCandidates(o).flatMap((label) => [
-      `lss: insert-${commandSlug(label)}`,
-      `LSS: Insert ${label}`,
-    ]),
-  );
+  const label = `lss: insert-${commandSlug(o.name)}`;
   return {
     kind: 'form',
     objectName: o.name,
-    label: labels[0],
-    labels,
+    label,
+    labels: [label],
     description: `Insert a ${displayName(o)} block at the cursor from the registry.`,
   };
 }

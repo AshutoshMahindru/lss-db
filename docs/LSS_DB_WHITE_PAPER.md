@@ -1365,25 +1365,27 @@ live-query-stored:: >0 when matching pages exist
 
 | Command | Responsibility |
 |---|---|
-| `lss:1setup-all` | Run all scaffold/setup steps |
-| `lss:2setup-bootstrap` | Create root and control pages |
-| `lss:3setup-areas` | Create area pages |
-| `lss:4setup-schema-pages` | Create entity/form/word schema-control pages |
-| `lss:5setup-db-tags` | Create DB tag contract pages |
-| `lss:6setup-tag-properties` | Create tag-property contract pages without binding schema to native tags |
-| `lss:7setup-relationships` | Create relationship contract pages |
-| `lss:8setup-templates` | Install native layout/query templates used by materialization |
-| `lss:9setup-dashboards` | Create dashboard contract pages |
-| `lss:10setup-word-extenders` | Create word extender entries |
-| `lss:11setup-db-native-config` | Create native tags/properties and remove entity schema properties from native tags |
-| `lss:12setup-page-tree` | Create page tree |
-| `lss:13verify-schema` | Verify expected scaffold pages |
-| `lss:34audit-graph` | Run graph-level verification, registry counts, and native tag schema pollution summary |
+| `lss: 1setup-all` | Run all scaffold/setup steps |
+| `lss: 2setup-bootstrap` | Create root and control pages |
+| `lss: 3setup-areas` | Create area pages |
+| `lss: 4setup-schema-pages` | Create entity/form/word schema-control pages |
+| `lss: 5setup-db-tags` | Create DB tag contract pages |
+| `lss: 6setup-tag-properties` | Create tag-property contract pages without binding schema to native tags |
+| `lss: 7setup-relationships` | Create relationship contract pages |
+| `lss: 8setup-templates` | Install native layout/query templates used by materialization |
+| `lss: 9setup-dashboards` | Create dashboard contract pages |
+| `lss: 10setup-word-extenders` | Create word extender entries |
+| `lss: 11setup-db-native-config` | Create native tags/properties and remove entity schema properties from native tags |
+| `lss: 12setup-page-tree` | Create page tree |
+| `lss: 13verify-schema` | Verify expected scaffold pages |
+| `lss: 34audit-graph` | Run graph-level verification, registry counts, and native tag schema pollution summary |
 | `lss: materialise page` | Repair/sync the current tagged page as an LSS area/entity/form/word-extender page |
-| `lss:51diagnose-current-page` | Write a detailed diagnostic report |
-| `lss:54clean-native-tag-schema-properties` | Remove LSS registry schema properties from native tag property lists |
+| `lss: 51diagnose-current-page` | Write a detailed diagnostic report |
+| `lss: 54clean-native-tag-schema-properties` | Remove LSS registry schema properties from native tag property lists |
+| `lss: 56reset-stale-node-properties` | Repair and restore stale LSS native node-property schemas |
+| `lss: 57repair-related-to-display-order` | Repair current-page property display order around related-to |
 
-The stable numbered command set is supplemented by registry-backed aliases for
+The stable numbered command set is supplemented by registry-backed commands for
 every object type in `src/registry/data.json`. Page-like entity and word
 extender types are available as `lss: new-*` commands, for example
 `lss: new-regime`, `lss: new-financial-asset`, and `lss: new-term`. Form types
