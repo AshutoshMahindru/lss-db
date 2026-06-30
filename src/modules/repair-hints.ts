@@ -16,15 +16,24 @@ import { uniqueObjectProps } from './templates';
 
 const MATERIALISE_HINT_IGNORE_TAGS = new Set([
   'Page',
+  'Pages',
   'Block',
+  'Blocks',
   'Tag',
+  'Tags',
   'Class',
   'Property',
+  'Properties',
   'Template',
   'Task',
   'Query',
   'Code',
   'Asset',
+  'Status',
+  'Area',
+  'Owner',
+  'LssObjectType',
+  'LssObjectTag',
 ]);
 
 function canonicalObjectTypeToken(token: string): string | null {
@@ -36,7 +45,12 @@ function canonicalObjectTypeToken(token: string): string | null {
 
 export function isInstanceHintTag(tag: string): boolean {
   const clean = safeTag(tag);
-  return Boolean(clean) && !MATERIALISE_HINT_IGNORE_TAGS.has(clean) && !canonicalObjectTypeToken(clean);
+  const propertyKey = canonicalPropertyKey(clean);
+  return Boolean(clean) &&
+    !MATERIALISE_HINT_IGNORE_TAGS.has(clean) &&
+    !propertySpec(propertyKey) &&
+    !allRelationships().some((rel) => canonicalPropertyKey(rel.property ?? '') === propertyKey) &&
+    !canonicalObjectTypeToken(clean);
 }
 
 export function harvestInlineTags(blocks: any[]): Set<string> {
@@ -172,9 +186,6 @@ export async function applyInstanceHintTagsToProps(
     const targetType = await objectTypeForResolvedPage(page);
     if (!targetType) {
       result.notes.push(`Materialise hint #${hint}: resolved to [[${page}]] but target page has no LSS type.`);
-      if (sourceProps.has('related-to')) {
-        props.set('related-to', appendRelationshipText(props.get('related-to'), relationshipRefText(page)));
-      }
       continue;
     }
     const relationship = relationshipPropertyForHint(object, targetType);
@@ -191,9 +202,9 @@ export async function applyInstanceHintTagsToProps(
       result.actions.push(`MATERIALISE hint #${hint}: ${relationship} -> [[${page}]]`);
     } else {
       result.notes.push(`Materialise hint #${hint}: no specific relationship maps ${object.name} to ${targetType}.`);
-    }
-    if (sourceProps.has('related-to')) {
-      props.set('related-to', appendRelationshipText(props.get('related-to'), relationshipRefText(page)));
+      if (sourceProps.has('related-to')) {
+        props.set('related-to', appendRelationshipText(props.get('related-to'), relationshipRefText(page)));
+      }
     }
   }
 }

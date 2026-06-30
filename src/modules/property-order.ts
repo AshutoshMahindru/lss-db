@@ -1,6 +1,6 @@
 import { canonicalPropertyKey } from '../core/db-properties';
 import { safeTag } from '../core/names';
-import { normalizeAreaRef, propertySpec, registry } from '../registry';
+import { allObjects, normalizeAreaRef, propertySpec } from '../registry';
 import type { RegistryObject } from '../registry/types';
 
 const AREA_PROPERTIES = new Set(['area', 'areas']);
@@ -17,8 +17,9 @@ function areaRelationRank(property: string, object?: RegistryObject): number | n
   const targets = new Set(propertyTargets(property));
   if (!targets.size) return null;
   const objectArea = object ? normalizeAreaRef(object.area) : '';
-  for (let index = 0; index < (registry.entityTypes ?? []).length; index++) {
-    const target = registry.entityTypes![index];
+  const targetsByRegistryOrder = allObjects();
+  for (let index = 0; index < targetsByRegistryOrder.length; index++) {
+    const target = targetsByRegistryOrder[index];
     const targetTag = safeTag(target.tag || target.name);
     if (!targets.has(targetTag)) continue;
     if (objectArea && normalizeAreaRef(target.area) !== objectArea) continue;

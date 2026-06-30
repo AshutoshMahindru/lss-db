@@ -10,6 +10,25 @@
   #{"LSS Placeholder - related-to"
     "LSS Placeholder/related-to"
     "Tags"
+    "Page"
+    "Pages"
+    "Block"
+    "Blocks"
+    "Tag"
+    "Property"
+    "Properties"
+    "Template"
+    "Query"
+    "Area"
+    "Status"
+    "owner"
+    "lss-object-type"
+    "lss-object-tag"
+    "related-function"
+    "related-project"
+    "related-proposal"
+    "related-team"
+    "related-workstream"
     "related-to"})
 
 (defn die [& parts]
@@ -20,6 +39,14 @@
   (let [entity (d/entity db value)]
     (or (:block/title entity) (:block/name entity) "")))
 
+(defn polluted-related-to-title? [title]
+  (let [clean (str/trim (str title))
+        lower (str/lower-case clean)]
+    (or (contains? placeholder-titles clean)
+        (str/starts-with? lower "lss placeholder")
+        (str/starts-with? lower "area - ")
+        (str/starts-with? lower "area/"))))
+
 (let [[graph & _flags] *command-line-args*]
   (when (or (nil? graph) (= graph "--help"))
     (die "Usage: nbb-logseq -cp <logseq-cli-vendor-src> scripts/repair-related-to-placeholder-values.cljs GRAPH"))
@@ -28,14 +55,14 @@
         rows (->> (d/q '[:find ?page ?value
                          :where [?page :plugin.property.logseq-lss-db-final-plugin/related-to ?value]]
                        db)
-                  (filter (fn [[_ value]] (contains? placeholder-titles (value-title db value))))
+                  (filter (fn [[_ value]] (polluted-related-to-title? (value-title db value))))
                   vec)
         tx (mapv (fn [[page value]] [:db/retract page related-to-ident value]) rows)]
     (if (seq tx)
       (do
         (ldb/transact! conn tx)
-        (println "Removed placeholder related-to values:" (count tx))
+        (println "Removed polluted related-to values:" (count tx))
         (doseq [[page value] rows]
           (let [p (d/entity db page)]
             (println (or (:block/title p) (:block/name p) page) "->" (value-title db value)))))
-      (println "No placeholder related-to values found."))))
+      (println "No polluted related-to values found."))))

@@ -78,13 +78,13 @@
                 vec)]
     (when (empty? property-names)
       (die "No plugin property definitions found for namespace:" plugin-ns))
-      (if (seq tx)
-        (do
-          (ldb/transact! conn tx)
-          (println "Updated native property order entries:" (count tx)))
-        (println "Native property order already canonical."))
-      (doseq [property-name property-names]
-        (let [entity (d/entity @conn (prop-ident property-name))]
-          (println property-name (:block/order entity))))
-      (when validate?
-        (validate-db! conn db-name))))
+    (if (seq tx)
+      (do
+        (ldb/transact! conn tx)
+        (println "Updated native property order entries:" (count tx)))
+      (println "Native property order already canonical."))
+    (doseq [property-name property-names]
+      (let [entity (d/entity @conn (prop-ident property-name))]
+        (println property-name (:block/order entity))))
+    (when validate?
+      (validate-db! conn db-name))))

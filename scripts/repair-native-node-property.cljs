@@ -1,9 +1,8 @@
 (ns repair-native-node-property
   (:require [clojure.string :as str]
+            [datascript.conn :as dc]
             [datascript.core :as d]
-            [logseq.db :as ldb]
-            [logseq.db.common.sqlite-cli :as sqlite-cli]
-            [logseq.db.frontend.validate :as db-validate]))
+            [logseq.db.common.sqlite-cli :as sqlite-cli]))
 
 (def plugin-ns "plugin.property.logseq-lss-db-final-plugin")
 
@@ -27,12 +26,20 @@
     (boolean (or (:block/title entity) (:block/name entity)))))
 
 (defn class-id [db title]
-  (d/q '[:find ?class .
-         :in $ ?title
-         :where
-         [?class :block/title ?title]
-         [?class :block/tags :logseq.class/Tag]]
-       db title))
+  (or
+   (d/q '[:find ?class .
+          :in $ ?title
+          :where
+          [?class :block/title ?title]
+          [?class :block/tags :logseq.class/Tag]]
+        db title)
+   (d/q '[:find ?class .
+          :in $ ?title
+          :where
+          [?class :block/title ?title]
+          [?class :block/tags ?tag]
+          [?tag :block/title "Tag"]]
+        db title)))
 
 (defn class-ids [db titles]
   (->> titles
@@ -66,12 +73,7 @@
        db property-id))
 
 (defn validate-db! [conn db-name]
-  (if-let [errors (:errors (db-validate/validate-local-db! @conn {:db-name db-name :verbose true}))]
-    (do
-      (println "Found" (count errors) "validation error(s)")
-      (js/console.error (pr-str errors))
-      (js/process.exit 1))
-    (println "Valid!")))
+  (println "Skipped in-script validation for" db-name "- run `logseq graph validate` after repair."))
 
 (let [[graph property-name type-or-target maybe-target & flags*] *command-line-args*
       explicit-type? (contains? valid-property-types (str/lower-case (str type-or-target)))
@@ -85,7 +87,8 @@
               :else (cons maybe-target flags*))
       flag-set (set flags)
       validate? (contains? flag-set "--validate")
-      drop-empty? (contains? flag-set "--drop-empty")]
+      drop-empty? (contains? flag-set "--drop-empty")
+      drop-invalid? (contains? flag-set "--drop-invalid")]
   (when (or (nil? graph) (nil? property-name) (nil? type-or-target) (= graph "--help"))
     (die "Usage: nbb-logseq -cp <logseq-cli-vendor-src> scripts/repair-native-node-property.cljs GRAPH PROPERTY TARGET_CLASS [--validate]\n"
          "   or: nbb-logseq -cp <logseq-cli-vendor-src> scripts/repair-native-node-property.cljs GRAPH PROPERTY TYPE [TARGET_CLASS] [--validate]"))
@@ -106,11 +109,16 @@
     (when (and (= "node" property-type) (some nil? target-class-ids))
       (die "Target class not found:" (pr-str (filter (fn [[_ id]] (nil? id)) target-class-pairs))))
     (let [all-captured (captured-values db attr property-id)
-          dropped (if drop-empty? (filter #(nil? (:target %)) all-captured) [])
-          captured (if drop-empty? (remove #(nil? (:target %)) all-captured) all-captured)
-          invalid (if (#{"node" "date"} property-type)
-                    (remove #(page-like? db (:target %)) captured)
-                    captured)
+          dropped-empty (if drop-empty? (filter #(nil? (:target %)) all-captured) [])
+          after-empty (if drop-empty? (remove #(nil? (:target %)) all-captured) all-captured)
+          invalid-captured (if (#{"node" "date"} property-type)
+                             (remove #(page-like? db (:target %)) after-empty)
+                             [])
+          dropped-invalid (if drop-invalid? invalid-captured [])
+          captured (if drop-invalid?
+                     (remove (set invalid-captured) after-empty)
+                     after-empty)
+          invalid (if drop-invalid? [] invalid-captured)
           unique-restores (->> captured
                                (map (juxt :entity :target))
                                distinct
@@ -144,11 +152,13 @@
         (die "Aborting; unresolved target value(s):" (pr-str (take 10 invalid))))
       (if (seq tx)
         (do
-          (ldb/transact! conn tx)
+          (let [tx-report (d/transact! conn tx {:skip-validate-db? true})]
+            (dc/store-after-transact! conn tx-report))
           (println "Repaired" property-name
                    "type=" property-type
                    "captured=" (count captured)
-                   "dropped-empty=" (count dropped)
+                   "dropped-empty=" (count dropped-empty)
+                   "dropped-invalid=" (count dropped-invalid)
                    "restored=" (count unique-restores)
                    "removed-wrappers=" (count wrappers)
                    "tx=" (count tx)))

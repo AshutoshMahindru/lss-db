@@ -41,6 +41,7 @@ import { QUERY_PAGE_SECTION_HEADINGS, relationshipPropertyNames, sectionNameFrom
 import { type DashboardRepairOptions, repairDashboardQueries as repairDashboardQueriesWithInference, repairLinkedParentDashboards } from './repair-dashboard';
 import { applyIncomingSourceTagsForPage } from './repair-source-tags';
 import { syncInverseRelationshipProperties } from './repair-inverse-relationships';
+import { sanitizeGenericRelatedToForRepair } from './repair-related-to-sanitize';
 import { materializeTemplateSections } from './repair-template';
 import {
   cleanForeignPluginPropertyCopies,
@@ -1002,7 +1003,7 @@ async function repairPageCore(
     }
   }
 
-  await normalizeRelationshipPropsForRepair(result, props);
+  sanitizeGenericRelatedToForRepair(result, props, pageName); await normalizeRelationshipPropsForRepair(result, props);
 
   // Clean invalid node relationship values (e.g. wrong Venture id or unresolvable text)
   // via plugin when user cannot manually remove the property in UI.

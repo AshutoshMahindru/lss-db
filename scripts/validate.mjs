@@ -301,6 +301,7 @@ if (
   !propertyOrderSource.includes('OWNER_PROPERTIES') ||
   !propertyOrderSource.includes("if (clean === 'related-to') return [3, 1]") ||
   !propertyOrderSource.includes('if (STATUS_PROPERTIES.has(clean)) return [5, 0]') ||
+  !propertyOrderSource.includes('allObjects()') ||
   !propertyOrderSource.includes('areaRelationRank(clean, object)')
 ) {
   fail('page properties must order lss-object-type, area, hierarchy relations, owner, related-to, other fields, then status');
